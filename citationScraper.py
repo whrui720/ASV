@@ -15,7 +15,7 @@ def extract_pdf_text(pdf_path):
 
 
 if __name__ == '__main__':
-    pdf_path = 'SecureLoad.pdf'
+    pdf_path = 'papers/'
     pdf_text = extract_pdf_text(pdf_path)
 
     with open("output.txt", "w") as file:
