@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 from rapidfuzz import process
+import google.generativeai as genai
 import requests
 
 DATASET_DIR = "datasets/"
@@ -38,7 +39,7 @@ def download_doi(doi, download_path):
     return None
 
 #advanced search and download through platform API's using fuzzy search 
-def download_adv(other, download_path, match_top=3):
+def download_adv(other, download_path, match_top=1):
   try:
     #search kaggle (based on 'keyword', putting the entire citation in, assuming this works like the search bar in kaggle); subprocess required to automate CLI
     search_command = f"kaggle datasets list -s \"{other}\" --csv"
@@ -79,7 +80,6 @@ def download_adv(other, download_path, match_top=3):
     print(f"An unexpected error occurred: {e}")
   return None
 
-
 def create_r_script(csv_filepath, rscriptpath):
   ds_name = os.path.splitext(os.path.basename(csv_filepath))[0]
   r_file = os.path.join(rscriptpath, f"{ds_name}.R")
@@ -113,6 +113,53 @@ def create_r_script(csv_filepath, rscriptpath):
   with open(r_file, "w") as file:
     file.write(r_script)
   print(f"Created R script: {r_file}")
+
+def genrscript(citation_dict):
+  genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+  
+  # Create the model
+  generation_config = {
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_output_tokens": 8192,
+    "response_mime_type": "text/plain",
+  }
+
+  model = genai.GenerativeModel(
+    model_name="gemini-2.0-flash-exp",
+    generation_config=generation_config,
+  )
+
+  chat_session = model.start_chat(
+    history=[
+    ]
+  )
+
+  response = chat_session.send_message(
+    
+    f"""Here is a CSV with identifier {} and features {}. 
+    There are {} instances of data.
+    The first row as an example looks like this {}.
+    Write R code only, without any introduction, comments, or explanation.
+    Create R code that converts and stores this CSV in a data frame, and statistically validates each of the following claims: {}"""
+  
+  )
+
+  print(response.text)
+
+  #placeholder: the r script needs to be run and output grabbed before the second prompt  
+  routput = ""
+
+  response2 = chat_session.send_message(
+    
+    f"""Here is the R output: {rouput}
+    Based on this output, check the validity of every claim in the first prompt.
+    """
+  
+  )
+
+  print(response2.text)
 
 def main():
   #assume there is a doi link in some of the citation strings
