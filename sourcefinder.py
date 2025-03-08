@@ -138,16 +138,18 @@ def create_py_script(csv_filepath, pyscriptpath, input_script):
   ds_name = os.path.splitext(os.path.basename(csv_filepath))[0]
   py_file = os.path.join(pyscriptpath, f"{ds_name}.R")
   
+
+
   #py script content starts here:
   #currently chatgpt example
-  py_script = f"""{input_script}
- 
-  """
-  #R script ends here
+  # py_script = f"""{input_script}
+  
+  # """
+  # #R script ends here
 
-  with open(py_file, "w") as file:
-    file.write(py_script)
-  print(f"Created py script: {py_file}")
+  # with open(py_file, "w") as file:
+  #   file.write(py_script)
+  # print(f"Created py script: {py_file}")
 
   
 
