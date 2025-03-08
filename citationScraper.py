@@ -1,44 +1,33 @@
-import requests
 from pdfminer.high_level import extract_text
 import re
 
-def download_pdf(url, save_path):
-    """Downloads a PDF from a URL and saves it locally."""
-    response = requests.get(url)
-    if response.status_code == 200:
-        with open(save_path, 'wb') as file:
-            file.write(response.content)
-        print(f"PDF downloaded successfully: {save_path}")
-    else:
-        print("Failed to download PDF")
-
-def find_sentence_boundaries(text, index):
-    """Finds the sentence boundaries by extending backward to the previous period or newline
-       and forward to the next period or newline."""
-    
-    # Find the last period or newline before the index
-    start = max(text.rfind('.', 0, index), text.rfind('\n', 0, index)) + 1
-    
-    # Find the next period or newline after the index
-    end_period = text.find('.', index)
-    end_newline = text.find('\n', index)
-    
-    # Get the closest stopping point (whichever comes first)
-    if end_period == -1:
-        end = end_newline
-    elif end_newline == -1:
-        end = end_period
-    else:
-        end = min(end_period, end_newline)
-
-    # Adjust bounds to avoid cutting off characters
-    start = max(start, 0)
-    end = end + 1 if end != -1 else len(text)
-
-    return start, end
-
 def find_superscripts(text, max_numeric_ratio=0.4, max_digits=2):
     """Finds potential superscript citations in the text."""
+    
+    def find_sentence_boundaries(text, index):
+        """Finds the sentence boundaries by extending backward to the previous period or newline
+        and forward to the next period or newline."""
+        
+        # Find the last period or newline before the index
+        start = max(text.rfind('.', 0, index), text.rfind('\n', 0, index)) + 1
+        
+        # Find the next period or newline after the index
+        end_period = text.find('.', index)
+        end_newline = text.find('\n', index)
+        
+        # Get the closest stopping point (whichever comes first)
+        if end_period == -1:
+            end = end_newline
+        elif end_newline == -1:
+            end = end_period
+        else:
+            end = min(end_period, end_newline)
+
+        # Adjust bounds to avoid cutting off characters
+        start = max(start, 0)
+        end = end + 1 if end != -1 else len(text)
+
+        return start, end
     
     # Match numbers that directly follow a letter and are followed by ., ,, (, space, or end of string
     pattern = r"(?<=[a-zA-Z])(\d+)(?=[\.,\s(]|$)"
@@ -54,7 +43,7 @@ def find_superscripts(text, max_numeric_ratio=0.4, max_digits=2):
             context = text[sentence_start:sentence_end].strip()
 
             # Check if closing parenthesis is within context
-            contains_closing_parenthesis = ')' in context
+            # contains_closing_parenthesis = ')' in context
 
             # Count letters and numbers in the context
             num_count = sum(c.isdigit() for c in context)
@@ -74,10 +63,7 @@ def extract_pdf_text(pdf_path):
     """Extracts text from a PDF using pdfminer.six."""
     return extract_text(pdf_path)
 
-pdf_url = "https://www.slvwd.com/sites/g/files/vyhlif1176/f/uploads/item_10b_4.pdf"
-local_pdf_path = "sample.pdf" # example article that is pinned in discord (data sharing)
-
-# download_pdf(pdf_url, local_pdf_path)
+local_pdf_path = "sample.pdf"
 
 if __name__ == '__main__':
     pdf_text = extract_pdf_text(local_pdf_path)
