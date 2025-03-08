@@ -3,6 +3,7 @@ output.txt
 *.pdf
 .DS_Store
 pymupdf-venv/
+bin/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
