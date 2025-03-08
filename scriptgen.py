@@ -1,5 +1,11 @@
 from openai import OpenAI
 import os
+import zipfile
+import tempfile
+import subprocess
+import json
+
+from sourcefinder import DL_and_create_citation_dict
 
 ''' Pseudocode for Deepseek calls:
   Given dictionary data structure A that has keys citations (string) and values (list of statistical claims, which are strings),
@@ -16,6 +22,9 @@ import os
     B. File of all py scripts (should be in the same format as all citations) 
     C. Holistic overview for all citations
 '''
+
+PYSCRIPTS_DIR = "pyscripts/"
+os.makedirs(PYSCRIPTS_DIR, exist_ok=True)
 
 def create_py_script(csv_filepath, pyscriptpath, input_script):
   ds_name = os.path.splitext(os.path.basename(csv_filepath))[0]
