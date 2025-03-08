@@ -11,20 +11,6 @@ RSCRIPTS_DIR = "rscripts/"
 os.makedirs(DATASET_DIR, exist_ok=True)
 os.makedirs(RSCRIPTS_DIR, exist_ok=True)
 
-#extract DOI's from list of citations and save the rest to find separately
-def extract_dois(citations):
-  doifound = [] #empty list for citations with DOI
-  needmatch = [] #empty list for citations that need to be matched
-  for citation in citations:
-    searched = re.search(r"https?://\S+", citation)
-    if searched:
-      print(f"DOI found for citation: {citation[0:10]}...\n")
-      doifound.append(searched.group())
-    else:
-      print(f"DOI failed for citation {citation[0:10]}..., applying advanced search\n")
-      needmatch.append(citation)
-  return doifound, needmatch
-
 #download from doi link as csv into dataset_dir
 def download_doi(doi, download_path):
   try:
@@ -39,9 +25,27 @@ def download_doi(doi, download_path):
     print(f"Failed to download {doi}: {e}\n")
     return None
 
+#extract DOI's from list of citations and save the rest to find separately
+def extract_dois(citations, download_path):
+  needmatch = [] #empty list for citations that need to be matched
+  for citation in citations:
+    searched = re.search(r"https?://\S+", citation)
+    if searched:
+      doi_url = searched.group()
+      print(f"DOI found for citation: {citation[0:10]}...\n")
+      try:
+        download_doi(doi_url, download_path)
+      except requests.exceptions.RequestException as e:
+        print(f"Error downloading {doi_url}: {e}\n")
+        needmatch.append(citation)  #add to needmatch if download fails
+    else:
+      print(f"DOI not found for citation {citation[0:10]}..., applying advanced search\n")
+      needmatch.append(citation)
+  return needmatch
+
+
 #advanced search and download through platform API's using fuzzy search 
 def download_kaggle_adv(other, download_path, failed_files, match_top=1, score_req = 50):
-
   print("fuzzy search on")
   try:
     print("finding through Kaggle...")
@@ -134,47 +138,27 @@ def download_google_adv(other, download_path, failed_files, match_top=1, score_r
 
   print("Download from Google BigQuery complete.")
 
-def create_py_script(csv_filepath, pyscriptpath, input_script):
-  ds_name = os.path.splitext(os.path.basename(csv_filepath))[0]
-  py_file = os.path.join(pyscriptpath, f"{ds_name}.R")
-  
-
-
-  #py script content starts here:
-  #currently chatgpt example
-  # py_script = f"""{input_script}
-  
-  # """
-  # #R script ends here
-
-  # with open(py_file, "w") as file:
-  #   file.write(py_script)
-  # print(f"Created py script: {py_file}")
-
-  
-
 def main():
 
   citations = [
     "Progress in Transformer Based Language Model",
     "PubMed Article Summarization Dataset",
-    "Stuart, D.  et al. Whitepaper: Practical challenges for researchers in data sharing. figshare https://doi.org/10.6084/m9.figshare.5975011(2018)."
+    "Stuart, D. et al. Whitepaper: Practical challenges for researchers in data sharing. figshare https://doi.org/10.6084/m9.figshare.5975011(2018)."
   ]
 
-  dois, others = extract_dois(citations)
+  #list of all citations that were not found and downloaded by extract_dois
+  advanced_needed = extract_dois(citations, DATASET_DIR)
 
-  print(f"{others}")
+  kaggle_failed = [] #list of citations not found from Kaggle
+  all_failed = [] #list of citations not found anywhere (literally just Google)
+  for citation in advanced_needed:
+    download_kaggle_adv(citation, DATASET_DIR, kaggle_failed)
   
-  for doi in dois:
-    csv_file = download_doi(doi, DATASET_DIR)
+  for citation in kaggle_failed:
+    download_google_adv(citation, DATASET_DIR, all_failed)
 
-  kaggle_failed = []
-  all_failed = []
-  for other in others:
-    csv_file, _ = download_kaggle_adv(other, DATASET_DIR, kaggle_failed)
-  
-  for data in kaggle_failed:
-    pass #TODO
+  for citation in all_failed:
+    print(f"No dataset found for {citation}, discarding")
 
 if __name__ == "__main__":
   main()
