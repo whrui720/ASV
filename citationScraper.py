@@ -15,7 +15,6 @@ def locate_reference(full_text):
     # TODO: FIND BETTER WAY TO DETERMINE ENDING
     return references_text[:2000]
 
-
 def parse_reference(ref_text):
     """
     Parse a single string of references into dictionary of ref val : ref line
@@ -112,8 +111,7 @@ def find_superscripts(text, ref_dict, max_numeric_ratio=0.4, max_digits=2):
     
     return ref_to_superscript
 
-
-def main():
+def get_citation_dict():
     pdf_path = 'papers/data_sharing.pdf'
     text = extract_text(pdf_path)
     
@@ -122,14 +120,11 @@ def main():
     ref_dict = parse_reference(ref_text)
     ref_to_superscript = find_superscripts(text, ref_dict)
 
-    
     output_dict = {ref_dict[key] : superscripts for key, superscripts in ref_to_superscript.items()}
 
-    with open('output.txt', 'w') as file:
-        for key, superscripts in output_dict.items():
-            file.write(f"CITATION: {key} ||||  {superscripts}\n\n")
-            # file.write(ref_text)
+    # with open('output.txt', 'w') as file:
+    #     for key, superscripts in output_dict.items():
+    #         file.write(f"CITATION: {key} ||||  {superscripts}\n\n")
+    #         # file.write(ref_text)
 
-
-if __name__ == '__main__':
-    main()
+    return output_dict

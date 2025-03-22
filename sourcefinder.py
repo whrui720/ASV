@@ -144,7 +144,7 @@ citations = [
     "Stuart, D. et al. Whitepaper: Practical challenges for researchers in data sharing. figshare https://doi.org/10.6084/m9.figshare.5975011(2018)."
   ]
 
-def DL_and_create_citation_dict(citations):
+def DL_and_create_citation_list(citations):
   citation_list = [] #list of citations IN THE SAME ORDER AS DATASETS ARE DOWNLOADED (when sorted by time modified)
   #list of all citations that were not found and downloaded by extract_dois
   advanced_needed = extract_dois(citations, citation_list, DATASET_DIR)
