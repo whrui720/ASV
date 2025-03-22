@@ -48,7 +48,7 @@ def parse_reference(ref_text):
 
     return references_dict
     
-def find_superscripts(text, max_numeric_ratio=0.4, max_digits=2):
+def find_superscripts(text, ref_dict, max_numeric_ratio=0.4, max_digits=2):
     """Finds potential superscript citations in the text."""
     
     def find_sentence_boundaries(text, index):
@@ -79,32 +79,38 @@ def find_superscripts(text, max_numeric_ratio=0.4, max_digits=2):
     # Match numbers that directly follow a letter and are followed by ., ,, (, space, or end of string
     pattern = r"(?<=[a-zA-Z])(\d+)(?=[\.,\s(]|$)"
     
-    with open("superscripts.txt", "w", encoding="utf-8") as f:
-        matches = re.finditer(pattern, text)
-        for match in matches:
-            number = match.group()
-            start, end = match.start(), match.end()
+    ref_to_superscript = defaultdict(list)
 
-            # Find full sentence context (considering newlines too)
-            sentence_start, sentence_end = find_sentence_boundaries(text, start)
-            context = text[sentence_start:sentence_end].strip()
+    matches = re.finditer(pattern, text)
+    for match in matches:
+        number = match.group()
+        start, end = match.start(), match.end()
 
-            # Check if closing parenthesis is within context
-            # contains_closing_parenthesis = ')' in context
+        # Find full sentence context (considering newlines too)
+        sentence_start, sentence_end = find_sentence_boundaries(text, start)
+        context = text[sentence_start:sentence_end].strip()
 
-            # Count letters and numbers in the context
-            num_count = sum(c.isdigit() for c in context)
-            letter_count = sum(c.isalpha() for c in context)
-            
-            # Calculate numeric ratio
-            total_chars = num_count + letter_count
-            numeric_ratio = num_count / total_chars if total_chars > 0 else 0
+        # Check if closing parenthesis is within context
+        # contains_closing_parenthesis = ')' in context
 
-            # Only log if the number is short and the surrounding text is mostly letters
-            if len(number) <= max_digits and numeric_ratio <= max_numeric_ratio:
-                f.write(f"Superscript: '{number}' at {start}-{end}, Context: '{context}'\n")
-            # else:
-            #     f.write(f"Likely non-superscript: '{number}' at {start}-{end}, Context: '{context}'\n")    
+        # Count letters and numbers in the context
+        num_count = sum(c.isdigit() for c in context)
+        letter_count = sum(c.isalpha() for c in context)
+        
+        # Calculate numeric ratio
+        total_chars = num_count + letter_count
+        numeric_ratio = num_count / total_chars if total_chars > 0 else 0
+
+        # Only log if the number is short and the surrounding text is mostly letters
+        if len(number) <= max_digits and numeric_ratio <= max_numeric_ratio:
+            # f.write(f"Superscript: '{number}' at {start}-{end}, Context: '{context}'\n")
+            if int(number) in ref_dict:
+                ref_to_superscript[int(number)].append(context)
+
+        # else:
+        #     f.write(f"Likely non-superscript: '{number}' at {start}-{end}, Context: '{context}'\n")    
+    
+    return ref_to_superscript
 
 
 def main():
@@ -113,14 +119,16 @@ def main():
     
 
     ref_text = locate_reference(text)
-
     ref_dict = parse_reference(ref_text)
+    ref_to_superscript = find_superscripts(text, ref_dict)
+
+    
+    output_dict = {ref_dict[key] : superscripts for key, superscripts in ref_to_superscript.items()}
 
     with open('output.txt', 'w') as file:
-        for key, ref in ref_dict.items():
-            file.write(f"KEY: {key} |||| VAL: {ref}\n\n")
+        for key, superscripts in output_dict.items():
+            file.write(f"CITATION: {key} ||||  {superscripts}\n\n")
             # file.write(ref_text)
-
 
 
 if __name__ == '__main__':
