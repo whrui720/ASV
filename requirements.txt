@@ -1,5 +1,7 @@
 PyMuPDF==1.25.1
+pdfminer.six
 kaggle==1.6.17
 rapidfuzz==3.11.0
 openai==1.61.1
 google-cloud-bigquery==3.30.0
+spacy == 3.8.4

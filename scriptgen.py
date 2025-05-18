@@ -12,11 +12,12 @@ from citationScraper import get_citation_dict
 
 ''' Pseudocode for Deepseek calls:
   Given dictionary data structure A that has keys citations (string) and values (list of statistical claims, which are strings),
-  and dictionary B that has keys citations (strings) and values (csv files, e.g. the underlying dataset for the citation)
+  and file structure B that matches the list of citations (strings) in order with corresponding datasets within the 
+  datasets folder (csv files, e.g. the underlying dataset for the citation)
   For each citation:
     1. Use Deepseek to generate the py script for validating the list of claims 
-      (also use DeepSeek to check if this citation is statistical/worth checking using this script) associated with this citation 
-      (this will need data structure input), SAVE generated scripts for download
+      (also use DeepSeek to check if this citation is statistical/worth checking using this script TODO 
+      associated with this citation (this will need data structure input), CHECK TODO AND SAVE generated scripts for download
     2. Run the py script executable and feed results back into next Deepseek call; 
       generate holistic data overview (save as well)
   
@@ -95,9 +96,14 @@ def create_py_scripts(citation_list, citation_dict, pyscriptpath, overviewpath):
       i = i + 1
 
   def main():
-   #bugtesting: create a mock citation list and dict and call create_py_scripts
+    test_citationlist = [
+      "Progress in Transformer Based Language Model",
+      "PubMed Article Summarization Dataset",
+      "Stuart, D. et al. Whitepaper: Practical challenges for researchers in data sharing. figshare https://doi.org/10.6084/m9.figshare.5975011(2018)."
+    ]
+   
 
-   pass
+    pass
 
   if __name__ == "__main__":
     main()

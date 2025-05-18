@@ -6,6 +6,12 @@ pymupdf-venv/
 bin/
 .vscode/
 
+# Output/data directories 
+datasets/
+overviews/
+papers/
+pyscripts/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

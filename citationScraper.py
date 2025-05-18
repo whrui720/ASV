@@ -1,11 +1,28 @@
 from pdfminer.high_level import extract_text
 from collections import defaultdict
 import re
+import spacy
+
+""" TWO MAIN FORMS/PURPOSES OF CITATION SCRAPING: 
+1. General claim scraping - we actually don't care about finding citations here; 
+we first use spaCy NLP to scrape all sentences that look like quantitative claims. 
+Next, we have two options: for simple (googleable) claims, we can try and request data
+from a relevant trustworthy institution into a table and then use TAPAS to query and return it.
+OR, we could scrape for a relevant dataset ourselves (given that the claim itself fits this approach better),
+and then do the statistical check script generation using some LLM. Tl;dr use this approach for 
+shorter pieces that do not have listed sources (e.g. news articles, etc.)
+
+2. Source validation - we actually want to check the worthiness of the source, so some
+qualitative check there using LLM, and then we want to match each given claim to their source, which
+we will then explicitly check the claim against any data that we can find within the source. A new important
+aspect is that we should be able to check qualitative claims against the source as well given NLP; we can also do 
+a deep dive into the data using the same script generation as listed above for the general claim scraping.
+"""
 
 references_dict = defaultdict(list)
 
 def locate_reference(full_text):
-    start_index = full_text.lower().find("references")
+    start_index = full_text.find("References")
 
     if start_index != -1:
         references_text = full_text[start_index:]
@@ -111,20 +128,70 @@ def find_superscripts(text, ref_dict, max_numeric_ratio=0.4, max_digits=2):
     
     return ref_to_superscript
 
-def get_citation_dict():
-    pdf_path = 'papers/data_sharing.pdf'
-    text = extract_text(pdf_path)
-    
+# Define keywords that often signal quantitative claims
+QUANT_WORDS = {
+    "more than", "less than", "greater than", "fewer than", "at least", "at most",
+    "increase", "decrease", "rose", "dropped", "fell", "higher", "lower", "doubled", "tripled",
+    "percent", "percentage", "ratio", "rate", "per", "average", "median", "mean"
+}
 
+def get_all_claims(pdf_path, threshold): #this uses a spaCy NLP to detect all claims in general
+    nlp = spacy.load("en_core_web_sm")
+    text = extract_text(pdf_path)
+    doc = nlp(text)
+    claims = []
+
+    for sent in doc.sents:
+        sent_text = sent.text.lower()
+        num_matches = 0
+        total_features = 0
+
+        #count total keywords to compare
+        for word in QUANT_WORDS:
+            if word in sent_text:
+                num_matches += 1
+                total_features += 1
+
+        #count total numerals/percentage based chars
+        for token in sent:
+            if token.like_num or "%" in token.text:
+                num_matches += 1
+                total_features += 1
+
+        #append to claims if enough quantitative features detected
+        if total_features > 0 and (num_matches / total_features) >= threshold:
+            claims.append(sent.text.strip())
+
+    with open('output_all_claims.txt', 'w') as file:
+        file.write(claims)
+
+    return claims
+
+
+def get_citation_dict(pdf_path):
+    text = extract_text(pdf_path)
     ref_text = locate_reference(text)
     ref_dict = parse_reference(ref_text)
     ref_to_superscript = find_superscripts(text, ref_dict)
 
+    print(ref_text)
+    print(ref_dict)
+    print(ref_to_superscript)
+
     output_dict = {ref_dict[key] : superscripts for key, superscripts in ref_to_superscript.items()}
 
-    # with open('output.txt', 'w') as file:
-    #     for key, superscripts in output_dict.items():
-    #         file.write(f"CITATION: {key} ||||  {superscripts}\n\n")
-    #         # file.write(ref_text)
+    with open('output_citation_dict.txt', 'w') as file:
+        for key, superscripts in output_dict.items():
+            file.write(f"CITATION: {key} ||||  {superscripts}\n\n")
+            # file.write(ref_text)
 
     return output_dict
+
+def main():
+    pdf_path = 'papers/data_sharing.pdf'
+    get_citation_dict(pdf_path)
+    get_all_claims(pdf_path)
+
+
+if __name__ == "__main__":
+    main()
