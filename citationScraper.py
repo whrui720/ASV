@@ -174,9 +174,9 @@ def get_citation_dict(pdf_path):
     ref_dict = parse_reference(ref_text)
     ref_to_superscript = find_superscripts(text, ref_dict)
 
-    print(ref_text)
-    print(ref_dict)
-    print(ref_to_superscript)
+    # print(ref_text)
+    # print(ref_dict)
+    # print(ref_to_superscript)
 
     output_dict = {ref_dict[key] : superscripts for key, superscripts in ref_to_superscript.items()}
 
@@ -188,9 +188,9 @@ def get_citation_dict(pdf_path):
     return output_dict
 
 def main():
-    pdf_path = 'papers/data_sharing.pdf'
+    pdf_path = 'sample.pdf'
     get_citation_dict(pdf_path)
-    get_all_claims(pdf_path)
+    # get_all_claims(pdf_path)
 
 
 if __name__ == "__main__":

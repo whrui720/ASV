@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import zipfile
 from rapidfuzz import process
 import requests
 from google.cloud import bigquery
@@ -71,15 +72,33 @@ def download_kaggle_adv(other, citation_list, download_path, failed_files, match
     for match in matches:
       dataset_id, score, _ = match
       print(f"Match found: {dataset_id} with score: {score}")
-      if(score > score_req):
-        total_matches += 1
-        download_command = f'kaggle datasets download -d "{dataset_id}" -p "{download_path}"'
-        subprocess.run(download_command, shell=True, check=True)
-        
-        #assumes zip file for download
-        downloaded_file = os.path.join(download_path, dataset_id.split('/')[-1])
-        citation_list.append(downloaded_file)
-        downloaded_files.append(downloaded_file)
+      if score > score_req:
+          total_matches += 1
+
+          # Download the ZIP
+          download_command = f'kaggle datasets download -d "{dataset_id}" -p "{download_path}"'
+          subprocess.run(download_command, shell=True, check=True)
+
+          # Construct ZIP file path
+          zip_filename = dataset_id.split('/')[-1] + '.zip'
+          zip_path = os.path.join(download_path, zip_filename)
+
+          # Extract the ZIP
+          with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+              zip_ref.extractall(download_path)
+              print(f"Extracted ZIP: {zip_path}")
+
+          # Optionally, delete the ZIP to clean up
+          os.remove(zip_path)
+
+          # Optionally: track all CSVs extracted
+          extracted_files = [
+              os.path.join(download_path, f)
+              for f in zip_ref.namelist()
+              if f.lower().endswith('.csv')
+          ]
+          citation_list.extend(extracted_files)
+          downloaded_files.extend(extracted_files)
 
     if total_matches == 0:
       print(f"No matches meeting score req of: {score}, saving to try on Google")
@@ -137,34 +156,56 @@ def download_google_adv(other, citation_list, download_path, failed_files, match
 
   print("Download from Google BigQuery complete.")
 
-
-citations = [
-    "Progress in Transformer Based Language Model",
-    "PubMed Article Summarization Dataset",
-    "Stuart, D. et al. Whitepaper: Practical challenges for researchers in data sharing. figshare https://doi.org/10.6084/m9.figshare.5975011(2018)."
-  ]
-
 def DL_and_create_citation_list(citations):
-  citation_list = [] #list of citations IN THE SAME ORDER AS DATASETS ARE DOWNLOADED (when sorted by time modified)
-  #list of all citations that were not found and downloaded by extract_dois
-  advanced_needed = extract_dois(citations, citation_list, DATASET_DIR)
+    citation_list = []  # tracks downloaded datasets (in order)
+    all_failed = []     # citations not found anywhere
 
-  kaggle_failed = [] #list of citations not found from Kaggle
-  all_failed = [] #list of citations not found anywhere (literally just Google)
+    for citation in citations:
+        print(f"\nProcessing citation: {citation[0:50]}...\n")
 
-  for citation in advanced_needed:
-    download_kaggle_adv(citation, citation_list, DATASET_DIR, kaggle_failed)
-  
-  for citation in kaggle_failed:
-    download_google_adv(citation, citation_list, DATASET_DIR, all_failed)
+        # Step 1: Try DOI
+        searched = re.search(r"https?://\S+", citation)
+        doi_success = False
 
-  for citation in all_failed:
-    print(f"No dataset found for {citation}, discarding")
-  
-  return citation_list
+        if searched:
+            doi_url = searched.group()
+            print(f"DOI found: {doi_url}")
+            filename = download_doi(doi_url, DATASET_DIR)
+            if filename:
+                citation_list.append(filename)
+                doi_success = True
+            else:
+                print(f"DOI download failed for: {doi_url}")
+
+        # Step 2: If no DOI or DOI failed, try Kaggle
+        if not doi_success:
+            kaggle_failed = []
+            kaggle_result = download_kaggle_adv(citation, citation_list, DATASET_DIR, kaggle_failed)
+            if kaggle_result:
+                continue  # success, move on to next citation
+
+            # Step 3: If Kaggle fails, try Google
+            # google_failed = []
+            # download_google_adv(citation, citation_list, DATASET_DIR, google_failed)
+            # if citation not in citation_list:
+            #     all_failed.append(citation)
+            #     print(f"FAILED to find dataset for: {citation}")
+
+    print("\n=== Summary ===")
+    print(f"Downloaded: {len(citation_list)} datasets")
+    print(f"Unmatched citations: {len(all_failed)}")
+    for item in all_failed:
+        print(f"- {item}")
+
+    return citation_list
 
 def main():
-  pass
+  citations = [
+    "Progress in Transformer Based Language Model",
+    "PubMed Article Summarization Dataset",
+    "Stuart, D.  et al. Whitepaper: Practical challenges for researchers in data sharing. figshare https://doi.org/10.6084/m9.figshare.5975011 (2018)."
+  ]
+  DL_and_create_citation_list(citations)
 
 if __name__ == "__main__":
   main()
