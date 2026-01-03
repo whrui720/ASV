@@ -17,3 +17,56 @@ Reach goals:
 Find closely related datasets to cross check the validity of data
 Provide suggestions for EDA or points of clarification for the original authors
 Turn this into a web browser or an extension of some kind (Harry needs more full-stack experience).
+
+NEW UPDATED AGENTIC STRUCTURE:
+
+Step 1: Claim Identification + Citation Mapping
+The big change here is that after chunking the text, we should be able to use LLMs (agents?) to identify all claims (as a direct replace for NLP identification of claims),
+or at the very least be able to use LLMs in helping to identify quantitative-specific claims and with mapping. For example, we could use an LLM to identify a claim, 
+it's corresponding citation (particularily helpful for in-text citations), and even classify the claim itself (quantitative, qualitative, subjective, objective, etc.).
+By forcing this json format, we should actually be able to treat each type of claim in a different way. The agents, or deterministic workflows, will put these claims/citation objects
+into a queue for the claim treatment agent to pick up.
+
+Step 2: Claim Type Treatment
+  Different types of claims:
+
+  - Quantitative, citation found:
+    Map this claim to the corresponding citation. Download agent (dataset) needed.
+
+  - Quantitative, no citation found: Dataset search and download agent needed.
+    Find the nearest (how do we do this?) data source and substitute/map it for this citation
+  
+  - Qualitative, citation found (objective): Download agent (raw text) needed.
+    Map this claim to the corresponding citation
+
+  - Qualitative, no citation found (subjective): 
+    1. Query against truth table setup, and if not confident, then:
+    2. Query against LLM search setup (risky, force sources). Search and download agent only needed here.
+    If either provides a satisfactory answer (if the truth table does, it has higher priority), 
+    map this claim to the truth table result or the LLM search
+
+Step 3: Claim Validation
+  At this point, each claim object should be mapped to a corresponding source. Here, validation agents should do the following:
+
+  - Quantitative claim objects:
+    Create python code to validate the claim. Run it, check the output, return a judgement object, and then clean up.
+  
+  - Qualitative claim objects:
+    Holistically try to identify the validity of the claim (semantic search + RAG?) within the citation raw text. Return a judgement object, and clean up.
+
+  NOTE: A qualitative, no citation found claim that was satisfactorily answered by the truth table instantly goes into the
+  report output and skips this step.
+
+Step 4. Display 
+  Collect and display all of the judgment objects nicely. 
+
+
+JSON FORMATS:
+
+CLAIM OBJECT:
+
+
+JUDGEMENT OBJECT:
+
+
+
