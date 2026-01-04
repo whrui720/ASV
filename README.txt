@@ -61,12 +61,104 @@ Step 4. Display
   Collect and display all of the judgment objects nicely. 
 
 
-JSON FORMATS:
+EXAMPLE JSON FORMATS:
+### Step 1: Claim Identification + Citation Mapping
+CLAIM OBJECT
+```json
+{
+  "claim_id": "unique-identifier",
+  "text": "The average energy price increased last month.",
+  "claim_type": "quantitative",  // or "qualitative"
+  "citation_found": true,
+  "citation_text": "[1]",
+  "citation_details": {
+    "title": "Energy Prices Report",
+    "authors": ["Author Name"],
+    "year": 2023,
+    "url": "https://example.com/report"
+  },
+  "classification": ["objective"], // or "subjective"
+  "location_in_text": {
+    "start": 123,
+    "end": 167
+  }
+}
+```
 
-CLAIM OBJECT:
+---
 
+### Step 2: Claim Type Treatment
 
-JUDGEMENT OBJECT:
+CLAIM OBJECT AFTER TREATMENT
+```json
+{
+  "claim_id": "unique-identifier",
+  "text": "The average energy price increased last month.",
+  "claim_type": "quantitative",
+  "citation_mapped": true,
+  "citation_source": {
+    "downloaded": true,
+    "data_format": "csv",
+    "platform": "pandas",
+    "source_url": "https://example.com/data.csv"
+  },
+  "treatment_notes": "Citation found and dataset downloaded for validation."
+}
+```
+
+---
+
+### Step 3: Claim Validation
+
+JUDGEMENT OBJECT
+```json
+{
+  "claim_id": "unique-identifier",
+  "validation_type": "quantitative", // or "qualitative"
+  "validation_code": "mean(data['price']) > previous_month_mean",
+  "result": {
+    "is_factual": true,
+    "is_appropriate": false,
+    "explanation": "The claim is factually correct, but the mean is skewed by an outlier."
+  },
+  "confidence_score": 0.92,
+  "validation_metadata": {
+    "checked_by": "automated_agent",
+    "timestamp": "2026-01-04T12:00:00Z"
+  }
+}
+```
+
+---
+
+### Step 4: Display
+
+REPORT OBJECT
+```json
+{
+  "claims": [
+    {
+      "claim_id": "unique-identifier",
+      "text": "The average energy price increased last month.",
+      "judgement": {
+        "is_factual": true,
+        "is_appropriate": false,
+        "explanation": "The claim is factually correct, but the mean is skewed by an outlier."
+      },
+      "citation": {
+        "title": "Energy Prices Report",
+        "url": "https://example.com/report"
+      }
+    }
+    // ... more claims
+  ],
+  "summary": {
+    "total_claims": 10,
+    "validated": 8,
+    "issues_found": 2
+  }
+}
+```
 
 
 
