@@ -1,7 +1,7 @@
 """Utility functions for PDF extraction and text processing"""
 
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from pdfminer.high_level import extract_text
 from pathlib import Path
 import tiktoken
@@ -138,7 +138,7 @@ def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:
     return len(encoding.encode(text))
 
 
-def semantic_chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[Dict[str, any]]:
+def semantic_chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[Dict[str, Any]]:
     """
     Chunk text into overlapping segments.
     Returns list of dicts with chunk_id, text, start_pos, end_pos

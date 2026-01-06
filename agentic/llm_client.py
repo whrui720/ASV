@@ -74,12 +74,16 @@ Return only the JSON array, no additional text."""
             )
             
             # Track token usage
-            if ENABLE_COST_TRACKING:
+            if ENABLE_COST_TRACKING and response.usage:
                 self.total_input_tokens += response.usage.prompt_tokens
                 self.total_output_tokens += response.usage.completion_tokens
             
             # Parse response
-            result = json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content
+            if not content:
+                return []
+            
+            result = json.loads(content)
             
             # Handle both {"claims": [...]} and direct array formats
             claims_data = result.get("claims", result) if isinstance(result, dict) else result
@@ -142,11 +146,15 @@ Return only the JSON object, no additional text."""
                 response_format={"type": "json_object"}
             )
             
-            if ENABLE_COST_TRACKING:
+            if ENABLE_COST_TRACKING and response.usage:
                 self.total_input_tokens += response.usage.prompt_tokens
                 self.total_output_tokens += response.usage.completion_tokens
             
-            result = json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content
+            if not content:
+                return {}
+            
+            result = json.loads(content)
             
             # Handle wrapped format
             if "citations" in result:
