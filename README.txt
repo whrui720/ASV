@@ -18,7 +18,7 @@ Find closely related datasets to cross check the validity of data
 Provide suggestions for EDA or points of clarification for the original authors
 Turn this into a web browser or an extension of some kind (Harry needs more full-stack experience).
 
-NEW UPDATED AGENTIC STRUCTURE:
+NEW UPDATED STRUCTURE with more LLM calls and agentic search + download behavior:
 
 Step 1: Claim Identification + Citation Mapping
 The big change here is that after chunking the text, we should be able to use LLMs (agents?) to identify all claims (as a direct replace for NLP identification of claims),

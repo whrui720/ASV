@@ -1,6 +1,11 @@
 """
-Main citation scraper using hybrid deterministic + LLM approach.
-Step 1: Claim Identification + Citation Mapping
+Hybrid Citation Scraper - Deterministic Pipeline with LLM Augmentation
+
+Architecture:
+- Deterministic citation parsing with LLM fallback
+- Sentence-boundary text chunking to preserve claim integrity
+- Single-shot LLM calls for structured claim extraction
+- Deterministic citation mapping based on markers
 """
 
 import json
@@ -21,10 +26,13 @@ from .models import ClaimObject, CitationDetails
 
 class HybridClaimExtractor:
     """
-    Hybrid citation scraper that:
-    1. Tries deterministic citation parsing first
-    2. Falls back to LLM if deterministic fails
-    3. Uses LLM for claim extraction from text chunks
+    Hybrid citation scraper using deterministic pipeline + LLM augmentation.
+    
+    Pipeline stages:
+    1. Citation Extraction: Deterministic regex → LLM fallback
+    2. Text Chunking: Sentence-boundary splitting with overlap
+    3. Claim Extraction: Single-shot LLM calls with structured output
+    4. Citation Mapping: Deterministic marker matching
     """
     
     def __init__(self):
@@ -260,7 +268,7 @@ def main():
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python -m agentic.claim_extractor <pdf_path>")
+        print("Usage: python -m hybrid_citation_scraper.claim_extractor <pdf_path>")
         sys.exit(1)
     
     pdf_path = sys.argv[1]

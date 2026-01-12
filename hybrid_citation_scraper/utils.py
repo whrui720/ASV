@@ -2,16 +2,19 @@
 
 import re
 from typing import List, Dict, Optional, Tuple, Any
-from pdfminer.high_level import extract_text
 from pathlib import Path
 import tiktoken
+from langchain_community.document_loaders import PyPDFLoader
 
 from .config import REFERENCE_KEYWORDS, CITATION_STYLES, CHUNK_SIZE, CHUNK_OVERLAP
 
 
 def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from PDF file"""
-    return extract_text(pdf_path)
+    """Extract text from PDF file using LangChain's PyPDFLoader"""
+    loader = PyPDFLoader(pdf_path)
+    pages = loader.load()
+    # Combine all pages into single text
+    return '\n\n'.join([page.page_content for page in pages])
 
 
 def locate_reference_section(full_text: str) -> Optional[str]:
@@ -140,39 +143,64 @@ def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:
 
 def semantic_chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[Dict[str, Any]]:
     """
-    Chunk text into overlapping segments.
-    Returns list of dicts with chunk_id, text, start_pos, end_pos
-    """
-    # Simple sentence-based chunking
-    # For production, use more sophisticated methods (e.g., LangChain's text splitters)
+    Chunk text using sentence boundaries with character-level overlap.
     
+    Strategy:
+    - Split on sentence boundaries to never split claims mid-sentence
+    - Add small character overlap (default 100 chars) as safety net for multi-sentence claims
+    - Track character positions for accurate claim location mapping
+    
+    Args:
+        text: Input text to chunk
+        chunk_size: Target size in tokens (soft limit)
+        overlap: Character overlap between chunks (default 100)
+    
+    Returns:
+        List of dicts with chunk_id, text, start_pos, end_pos, token_count
+    """
+    # Split into sentences at natural boundaries
     sentences = re.split(r'(?<=[.!?])\s+', text)
+    
     chunks = []
     current_chunk = []
     current_tokens = 0
-    chunk_id = 0
-    char_pos = 0
+    chunk_start_pos = 0
     
     for sentence in sentences:
         sentence_tokens = count_tokens(sentence)
         
+        # Check if adding this sentence would exceed chunk size
         if current_tokens + sentence_tokens > chunk_size and current_chunk:
-            # Save current chunk
+            # Finalize current chunk
             chunk_text = ' '.join(current_chunk)
             chunks.append({
-                'chunk_id': chunk_id,
+                'chunk_id': len(chunks),
                 'text': chunk_text,
-                'start_pos': char_pos,
-                'end_pos': char_pos + len(chunk_text),
+                'start_pos': chunk_start_pos,
+                'end_pos': chunk_start_pos + len(chunk_text),
                 'token_count': current_tokens
             })
             
-            # Start new chunk with overlap
-            overlap_sentences = current_chunk[-2:] if len(current_chunk) >= 2 else current_chunk
-            current_chunk = overlap_sentences + [sentence]
-            current_tokens = sum(count_tokens(s) for s in current_chunk)
-            chunk_id += 1
-            char_pos += len(chunk_text) - len(' '.join(overlap_sentences))
+            # Start new chunk with character overlap from previous chunk
+            if overlap > 0 and len(chunk_text) >= overlap:
+                overlap_text = chunk_text[-overlap:]
+                # Find sentence boundary within overlap text
+                overlap_sentences = []
+                temp_text = overlap_text
+                for sent in reversed(current_chunk):
+                    if len(' '.join([sent] + overlap_sentences)) <= overlap:
+                        overlap_sentences.insert(0, sent)
+                    else:
+                        break
+                
+                current_chunk = overlap_sentences + [sentence]
+                current_tokens = sum(count_tokens(s) for s in current_chunk)
+                # Adjust start position accounting for overlap
+                chunk_start_pos = chunk_start_pos + len(chunk_text) - len(' '.join(overlap_sentences))
+            else:
+                current_chunk = [sentence]
+                current_tokens = sentence_tokens
+                chunk_start_pos += len(chunk_text) + 1  # +1 for space
         else:
             current_chunk.append(sentence)
             current_tokens += sentence_tokens
@@ -181,10 +209,10 @@ def semantic_chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = 
     if current_chunk:
         chunk_text = ' '.join(current_chunk)
         chunks.append({
-            'chunk_id': chunk_id,
+            'chunk_id': len(chunks),
             'text': chunk_text,
-            'start_pos': char_pos,
-            'end_pos': char_pos + len(chunk_text),
+            'start_pos': chunk_start_pos,
+            'end_pos': chunk_start_pos + len(chunk_text),
             'token_count': current_tokens
         })
     

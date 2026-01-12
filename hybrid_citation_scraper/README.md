@@ -1,6 +1,6 @@
-# Agentic Citation Scraper
+# Hybrid Citation Scraper
 
-Hybrid approach for extracting claims and citations from academic PDFs using deterministic parsing + GPT-4o-mini fallback.
+Deterministic pipeline with LLM augmentation for extracting claims and citations from academic PDFs. Uses regex-based parsing with GPT-4o-mini fallback for robustness.
 
 ## Features
 
@@ -14,7 +14,7 @@ Hybrid approach for extracting claims and citations from academic PDFs using det
 
 ```bash
 # Install dependencies
-pip install openai pdfminer.six pydantic tiktoken python-dotenv
+pip install -r requirements.txt
 
 # Add your OpenAI API key to geminikey.env
 echo "OPENAI_API_KEY=your-key-here" >> ../geminikey.env
@@ -26,7 +26,7 @@ echo "OPENAI_API_KEY=your-key-here" >> ../geminikey.env
 
 ```bash
 # Process a PDF
-python -m agentic.claim_extractor path/to/paper.pdf
+python -m hybrid_citation_scraper.claim_extractor path/to/paper.pdf
 
 # Output will be saved as paper_claims.json
 ```
@@ -34,7 +34,7 @@ python -m agentic.claim_extractor path/to/paper.pdf
 ### Python API
 
 ```python
-from agentic.claim_extractor import HybridClaimExtractor
+from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
 
 # Create extractor
 extractor = HybridClaimExtractor()
@@ -59,24 +59,33 @@ print(f"Total cost: ${cost_info['total_cost']:.4f}")
 
 ## Architecture
 
-### Step 1: Citation Extraction (Hybrid)
-1. Extract text from PDF using pdfminer
-2. Locate reference section deterministically
+**Deterministic Pipeline with LLM Augmentation** (not an agentic system)
+
+### Step 1: Citation Extraction (Hybrid: Deterministic → LLM Fallback)
+1. Extract text from PDF using LangChain's PyPDFLoader
+2. Locate reference section deterministically (keyword search)
 3. Detect citation format (APA, MLA, numeric, etc.)
-4. Try deterministic parsing with regex
-5. If fails, use GPT-4o-mini as fallback
+4. Try deterministic regex parsing
+5. If fails or invalid, use GPT-4o-mini as fallback
 
-### Step 2: Claim Extraction (LLM)
-1. Chunk document text (excluding references)
-2. Process each chunk with GPT-4o-mini
-3. Extract claims with structured output
-4. Identify claim type (quantitative/qualitative)
-5. Detect citation markers in text
+### Step 2: Text Chunking (Sentence-Boundary)
+1. Remove reference section from body text
+2. Split text on sentence boundaries (`.`, `!`, `?`)
+3. Group sentences into ~800 token chunks
+4. Add 100-character overlap between chunks to prevent splitting multi-sentence claims
+5. Track character positions for accurate location mapping
 
-### Step 3: Citation Mapping
-1. Match citation markers in claims to parsed citations
+### Step 3: Claim Extraction (Single-Shot LLM)
+1. Process each chunk with GPT-4o-mini
+2. Extract claims with structured JSON output (via Pydantic)
+3. Classify claim type (quantitative/qualitative)
+4. Detect citation markers in text
+5. Return typed ClaimObject instances
+
+### Step 4: Citation Mapping (Deterministic)
+1. Match citation markers in claims to parsed citations (regex)
 2. Populate full citation details for each claim
-3. Return structured ClaimObject instances
+3. Return final structured results
 
 ## Cost Estimates
 
@@ -120,16 +129,19 @@ See [models.py](models.py) for complete schemas.
 }
 ```
 
-## Next Steps (Steps 2-4)
+## Pipeline Status
 
-This module implements **Step 1** of the agentic structure:
-- ✅ Claim Identification
-- ✅ Citation Mapping
+This module implements the **core extraction pipeline**:
+- ✅ Hybrid Citation Extraction (deterministic + LLM fallback)
+- ✅ Sentence-Boundary Text Chunking with overlap
+- ✅ LLM-based Claim Extraction with structured output
+- ✅ Deterministic Citation Mapping
 
-**TODO:**
-- Step 2: Claim Type Treatment (download datasets/sources)
-- Step 3: Claim Validation (generate validation code)
-- Step 4: Display (generate report)
+**Next stages** (separate modules):
+- Step 5: Dataset Discovery (fuzzy search for quantitative claims without citations)
+- Step 6: Validation Script Generation (LLM generates Python code to verify claims)
+- Step 7: Automated Validation Execution
+- Step 8: Report Generation
 
 ## Configuration
 
