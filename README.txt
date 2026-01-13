@@ -27,7 +27,7 @@ it's corresponding citation (particularily helpful for in-text citations), and e
 By forcing this json format, we should actually be able to treat each type of claim in a different way. The agents, or deterministic workflows, will put these claims/citation objects
 into a queue for the claim treatment agent to pick up.
 
-Step 2: Claim Type Treatment
+Step 2: Claim Type Treatment (Source Finding + Truth table query)
   Different types of claims:
 
   - Quantitative, citation found:
@@ -40,7 +40,7 @@ Step 2: Claim Type Treatment
     Map this claim to the corresponding citation
 
   - Qualitative, no citation found (subjective): 
-    1. Query against truth table setup, and if not confident, then:
+    1. Query against truth table setup (Google’s Knowledge Graph, ClaimReview Schema, Google Fact Check Explorer, etc.), and if not confident, then:
     2. Query against LLM search setup (risky, force sources). Search and download agent only needed here.
     If either provides a satisfactory answer (if the truth table does, it has higher priority), 
     map this claim to the truth table result or the LLM search
