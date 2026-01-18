@@ -28,22 +28,27 @@ By forcing this json format, we should actually be able to treat each type of cl
 into a queue for the claim treatment agent to pick up.
 
 Step 2: Claim Type Treatment (Source Finding + Truth table query)
+NOTE: NEED TO SORT BETWEEN "DIFFICULT (requiring dataset) and SIMPLE (simple LLM call or truth table check will do).
   Different types of claims:
 
   - Quantitative, citation found:
-    Map this claim to the corresponding citation. Download agent (dataset) needed.
+    Map this claim to the corresponding citation. 
+    Download agent (dataset) needed AFTER batching claim objects by this citation.
 
-  - Quantitative, no citation found: Dataset search and download agent needed.
-    Find the nearest (how do we do this?) data source and substitute/map it for this citation
+  - Quantitative, no citation found: Search agent for substitute dataset(without downloading) needed immediately; save and prioritize search within existing substition dataset names.
+    Download agent (dataset) needed AFTER batching claim objects by this substitute citation.
+    Find the nearest (fuzzy search?) data source and substitute/map it for this citation
   
-  - Qualitative, citation found (objective): Download agent (raw text) needed.
-    Map this claim to the corresponding citation
+  - Qualitative, citation found (objective): 
+    Map this claim to the corresponding citation. 
+    Download agent (text) needed AFTER batching claim objects by this citation.
 
-  - Qualitative, no citation found (subjective): 
-    1. Query against truth table setup (Google’s Knowledge Graph, ClaimReview Schema, Google Fact Check Explorer, etc.), and if not confident, then:
-    2. Query against LLM search setup (risky, force sources). Search and download agent only needed here.
-    If either provides a satisfactory answer (if the truth table does, it has higher priority), 
-    map this claim to the truth table result or the LLM search
+  - Qualitative, no citation found (subjective): THESE CLAIM OBJECTS SHOULD GET PROCESSED LAST
+    Do nothing for now, label as needing additional treatment in Step 3.
+
+  To process these claims, batch them by citation. Only now should the download agent(s) be used.
+  To conserve memory, ONLY 1 DATA SOURCE (dataset or text) SHOULD BE DOWNLOADED/IN USE AT A TIME.
+  Once each ClaimObjectAfterTreatment for the given citation batch is created, immediately proceed to Step 3 for this specific citation.
 
 Step 3: Claim Validation
   At this point, each claim object should be mapped to a corresponding source. Here, validation agents should do the following:
@@ -53,6 +58,11 @@ Step 3: Claim Validation
   
   - Qualitative claim objects:
     Holistically try to identify the validity of the claim (semantic search + RAG?) within the citation raw text. Return a judgement object, and clean up.
+    IF QUALITATIVE, NO CITATION FOUND (SUBJECTIVE):
+    1. Query against truth table setup (Google’s Knowledge Graph, ClaimReview Schema, Google Fact Check Explorer, etc.), and if not confident, then:
+    2. Query against LLM search setup (risky, force sources). Search and download agent only needed here.
+    If either provides a satisfactory answer (if the truth table does, it has higher priority), 
+    map this claim to the truth table result or the LLM search
 
   NOTE: A qualitative, no citation found claim that was satisfactorily answered by the truth table instantly goes into the
   report output and skips this step.
