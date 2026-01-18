@@ -16,9 +16,7 @@ from .text_downloader import TextDownloader
 from .truth_table_checker import TruthTableChecker
 
 # Import models from Step 1
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-from hybrid_citation_scraper.models import ClaimObject, ClaimObjectAfterTreatment, CitationSource
+from models import ClaimObject, ClaimObjectAfterTreatment, CitationSource
 from hybrid_citation_scraper.llm_client import LLMClient
 
 logging.basicConfig(level=logging.INFO)

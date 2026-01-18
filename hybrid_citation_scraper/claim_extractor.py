@@ -21,7 +21,7 @@ from .utils import (
     semantic_chunk_text
 )
 from .llm_client import LLMClient
-from .models import ClaimObject, CitationDetails
+from models import ClaimObject, CitationDetails
 
 
 class HybridClaimExtractor:

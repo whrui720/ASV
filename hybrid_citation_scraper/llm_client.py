@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 from openai import OpenAI
 
 from .config import OPENAI_API_KEY, CLAIM_EXTRACTION_MODEL, CLAIM_EXTRACTION_TEMPERATURE, ENABLE_COST_TRACKING
-from .models import ClaimObject, CitationDetails, LocationInText
+from models import ClaimObject, CitationDetails, LocationInText
 
 
 class LLMClient:
