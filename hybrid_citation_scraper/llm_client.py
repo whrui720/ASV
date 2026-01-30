@@ -34,33 +34,33 @@ class LLMClient:
         
         prompt = f"""You are analyzing an academic text for claims. Extract ALL claims (both quantitative and qualitative) from the text below.
 
-For each claim, identify:
-1. The exact claim text
-2. Whether it's "quantitative" (involves numbers, statistics, measurements) or "qualitative" (descriptive, non-numerical)
-3. Any citation marker present (e.g., [1], (Smith, 2020), superscript numbers)
-4. Whether the claim is "objective" (fact-based) or "subjective" (opinion-based)
+            For each claim, identify:
+            1. The exact claim text
+            2. Whether it's "quantitative" (involves numbers, statistics, measurements) or "qualitative" (descriptive, non-numerical)
+            3. Any citation marker present (e.g., [1], (Smith, 2020), superscript numbers)
+            4. Whether the claim is "objective" (fact-based) or "subjective" (opinion-based)
 
-Return a JSON array of claims with this exact structure:
-[
-  {{
-    "claim_text": "exact text of the claim",
-    "claim_type": "quantitative or qualitative",
-    "citation_marker": "[1] or null if no citation",
-    "classification": ["objective or subjective"]
-  }}
-]
+            Return a JSON array of claims with this exact structure:
+            [
+            {{
+                "claim_text": "exact text of the claim",
+                "claim_type": "quantitative or qualitative",
+                "citation_marker": "[1] or null if no citation",
+                "classification": ["objective or subjective"]
+            }}
+            ]
 
-Guidelines:
-- A quantitative claim mentions specific numbers, percentages, rates, statistics, or measurements
-- Include the full sentence containing the claim
-- If no citation marker is visible, set citation_marker to null
-- Be thorough - extract all claims, not just the most prominent ones
-{citation_context}
+            Guidelines:
+            - A quantitative claim mentions specific numbers, percentages, rates, statistics, or measurements
+            - Include the full sentence containing the claim
+            - If no citation marker is visible, set citation_marker to null
+            - Be thorough - extract all claims, not just the most prominent ones
+            {citation_context}
 
-Text to analyze:
-{chunk_text}
+            Text to analyze:
+            {chunk_text}
 
-Return only the JSON array, no additional text."""
+            Return only the JSON array, no additional text."""
 
         try:
             response = self.client.chat.completions.create(
@@ -122,18 +122,18 @@ Return only the JSON array, no additional text."""
         """
         prompt = f"""Parse this reference section and extract all citations.
 
-Return a JSON object where keys are citation identifiers (numbers for numeric citations, or author names for author-year citations) and values are the full citation text.
+            Return a JSON object where keys are citation identifiers (numbers for numeric citations, or author names for author-year citations) and values are the full citation text.
 
-Example output format:
-{{
-  "1": "Smith, J., & Jones, M. (2020). Title of paper. Journal Name, 10(2), 123-145.",
-  "2": "Brown, A. et al. (2019). Another paper title. Conference Proceedings, 456-789."
-}}
+            Example output format:
+            {{
+            "1": "Smith, J., & Jones, M. (2020). Title of paper. Journal Name, 10(2), 123-145.",
+            "2": "Brown, A. et al. (2019). Another paper title. Conference Proceedings, 456-789."
+            }}
 
-Reference section:
-{ref_section}
+            Reference section:
+            {ref_section}
 
-Return only the JSON object, no additional text."""
+            Return only the JSON object, no additional text."""
 
         try:
             response = self.client.chat.completions.create(

@@ -28,6 +28,7 @@ class ClaimObject(BaseModel):
     text: str
     claim_type: str = Field(..., description="quantitative or qualitative")
     citation_found: bool
+    citation_id: Optional[str] = None  # Key to citations dict for batch processing
     citation_text: Optional[str] = None  # e.g., "[1]" or "(Smith, 2020)"
     citation_details: Optional[CitationDetails] = None
     classification: List[str] = Field(default_factory=list, description="objective, subjective, etc.")

@@ -54,9 +54,8 @@ class HybridClaimExtractor:
         if not ref_section:
             print("⚠️  Could not locate reference section deterministically")
             print("Using LLM fallback to extract references...")
-            # Use last 30% of document as fallback
-            ref_section = full_text[int(len(full_text) * 0.7):]
-            self.citations = self.llm_client.parse_references_with_llm(ref_section)
+            # locate_reference_section already tried fallback, use full text
+            self.citations = self.llm_client.parse_references_with_llm(full_text)
             return self.citations
         
         print("Detecting citation style...")
@@ -122,7 +121,7 @@ class HybridClaimExtractor:
     def map_citations_to_claims(self) -> List[ClaimObject]:
         """
         Map citation details to claims based on citation markers.
-        Updates the claims with full citation details.
+        Updates the claims with full citation details and citation_id.
         """
         print("Mapping citations to claims...")
         
@@ -132,6 +131,9 @@ class HybridClaimExtractor:
                 citation_id = self._extract_citation_id(claim.citation_text)
                 
                 if citation_id and citation_id in self.citations:
+                    # Store citation_id for batch processing downstream
+                    claim.citation_id = citation_id
+                    
                     # Create CitationDetails object
                     claim.citation_details = self._parse_citation_details(
                         self.citations[citation_id]
@@ -182,6 +184,37 @@ class HybridClaimExtractor:
         print(f"{'='*60}\n")
         
         return self.claims, self.citations
+    
+    def get_claims_by_citation(self) -> Dict[str, List[ClaimObject]]:
+        """
+        Group claims by citation_id for batch processing.
+        
+        Returns:
+            Dict mapping citation_id -> list of claims using that citation.
+            Claims without citations are grouped under "_no_citation" key.
+            
+        Usage:
+            claims_by_citation = extractor.get_claims_by_citation()
+            for citation_id, claims_group in claims_by_citation.items():
+                # Download citation source once
+                # Validate all claims in claims_group
+        """
+        from collections import defaultdict
+        
+        batched = defaultdict(list)
+        uncited = []
+        
+        for claim in self.claims:
+            if claim.citation_id:
+                batched[claim.citation_id].append(claim)
+            else:
+                uncited.append(claim)
+        
+        # Add uncited claims under special key
+        if uncited:
+            batched["_no_citation"] = uncited
+        
+        return dict(batched)
     
     def save_results(self, output_path: str):
         """Save claims to JSON file"""

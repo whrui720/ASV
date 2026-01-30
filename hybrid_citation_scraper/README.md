@@ -104,30 +104,72 @@ print(f"Total cost: ${cost_info['total_cost']:.4f}")
 
 See [models.py](models.py) for complete schemas.
 
-### ClaimObject
+### Complete JSON Output example
+
+The `save_results()` method produces a JSON file with claims, citations, and summary.
+
+**Note:** The JSON structures below correspond to Pydantic models in [models.py](models.py):
+- `claims` array → `ClaimObject` model
+- `citation_details` object → `CitationDetails` model  
+- `location_in_text` object → `LocationInText` model
+- `summary` object → No corresponding model (generated dict)
+- `citations` dict → Plain dict (not a Pydantic model)
+
 ```json
 {
-  "claim_id": "claim_0_1",
-  "text": "The average energy price increased by 15% last month.",
-  "claim_type": "quantitative",
-  "citation_found": true,
-  "citation_text": "[1]",
-  "citation_details": {
-    "title": "Energy Prices Report",
-    "authors": ["Smith, J."],
-    "year": 2023,
-    "url": "https://example.com/report",
-    "doi": "10.1234/example",
-    "raw_text": "Smith, J. (2023). Energy Prices Report..."
+  "claims": [
+    {
+      "claim_id": "claim_0_1",
+      "text": "The average energy price increased by 15% last month.",
+      "claim_type": "quantitative",
+      "citation_found": true,
+      "citation_id": "1",
+      "citation_text": "[1]",
+      "citation_details": {
+        "title": "Energy Prices Report",
+        "authors": ["Smith, J."],
+        "year": 2023,
+        "url": "https://example.com/report",
+        "doi": "10.1234/example",
+        "raw_text": "Smith, J. (2023). Energy Prices Report..."
+      },
+      "classification": ["objective"],
+      "location_in_text": {
+        "start": 1234,
+        "end": 1289,
+        "chunk_id": 0
+      }
+    }
+  ],
+  "citations": {
+    "1": "Smith, J. (2023). Energy Prices Report. Journal of Economics, 45(3), 123-145. https://doi.org/10.1234/example",
+    "2": "Jones, M. et al. (2022). Market analysis. Conference Proceedings, 456-789.",
+    "Brown": "Brown, A. (2021). Qualitative study. Publisher Name."
   },
-  "classification": ["objective"],
-  "location_in_text": {
-    "start": 1234,
-    "end": 1289,
-    "chunk_id": 0
+  "summary": {
+    "total_claims": 15,
+    "quantitative_claims": 8,
+    "qualitative_claims": 7,
+    "claims_with_citations": 12
   }
 }
 ```
+
+### Citations Dictionary
+
+Maps citation IDs to full citation text for reference and batch processing:
+
+```json
+{
+  "1": "Full citation text...",
+  "2": "Full citation text...",
+  "Smith": "Full citation text for author-year citation..."
+}
+```
+
+**Citation ID Format:**
+- Numeric citations: `[1]` → `"1"`, `[23]` → `"23"`
+- Author-year: `(Smith, 2020)` → `"Smith"`, `(Jones et al., 2019)` → `"Jones"`
 
 ## Pipeline Status
 
