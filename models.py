@@ -1,6 +1,6 @@
 """Pydantic models for structured data"""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -32,7 +32,19 @@ class ClaimObject(BaseModel):
     citation_text: Optional[str] = None  # e.g., "[1]" or "(Smith, 2020)"
     citation_details: Optional[CitationDetails] = None
     classification: List[str] = Field(default_factory=list, description="objective, subjective, etc.")
+    is_original: bool = Field(default=False, description="True if claim is original contribution from paper (no external citation or references paper's own figures/tables)")
     location_in_text: Optional[LocationInText] = None
+    
+    @model_validator(mode='after')
+    def validate_original_and_citation(self) -> 'ClaimObject':
+        """Ensure claims cannot be both original and have external citations"""
+        if self.is_original and self.citation_found:
+            raise ValueError(
+                f"Claim {self.claim_id} cannot be both original (is_original=True) "
+                f"and have an external citation (citation_found=True). "
+                f"Original claims are from the paper's own work and should not cite external sources."
+            )
+        return self
     
 
 class CitationSource(BaseModel):

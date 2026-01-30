@@ -17,6 +17,49 @@ def extract_text_from_pdf(pdf_path: str) -> str:
     return '\n\n'.join([page.page_content for page in pages])
 
 
+def extract_title_and_abstract(full_text: str) -> Dict[str, Optional[str]]:
+    """
+    Extract title and abstract from PDF text.
+    Returns dict with 'title' and 'abstract' keys.
+    """
+    lines = full_text.split('\n')
+    title = None
+    abstract = None
+    
+    # Try to extract title (usually first non-empty line or first few lines)
+    for i, line in enumerate(lines[:10]):
+        line = line.strip()
+        if line and len(line) > 10 and not line.isupper():
+            title = line
+            break
+    
+    # Try to find abstract section
+    abstract_keywords = ['abstract', 'summary', 'synopsis']
+    for i, line in enumerate(lines[:50]):
+        line_lower = line.lower().strip()
+        if any(keyword in line_lower for keyword in abstract_keywords):
+            # Found abstract header, collect following lines until next section
+            abstract_lines = []
+            for j in range(i+1, min(i+30, len(lines))):
+                next_line = lines[j].strip()
+                if not next_line:
+                    continue
+                # Stop at next section header (all caps or specific keywords)
+                if (next_line.isupper() and len(next_line) > 5) or \
+                   any(keyword in next_line.lower() for keyword in ['introduction', 'background', 'keywords', '1.']):
+                    break
+                abstract_lines.append(next_line)
+            
+            if abstract_lines:
+                abstract = ' '.join(abstract_lines)
+                break
+    
+    return {
+        'title': title,
+        'abstract': abstract
+    }
+
+
 def locate_reference_section(full_text: str) -> Optional[str]:
     """
     Deterministically locate the reference section in text.

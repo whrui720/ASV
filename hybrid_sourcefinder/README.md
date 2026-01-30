@@ -20,6 +20,7 @@ Processes claims from Step 1 (hybrid_citation_scraper) and maps them to appropri
 
 ```
 ClaimTreatmentAgent (Main Orchestrator)
+(PER CITATION)
 ├── Quantitative + Citation → SourceFinder → Download dataset
 ├── Quantitative - Citation → DatasetSearcher → Find & download
 ├── Qualitative + Citation → TextDownloader → Download text

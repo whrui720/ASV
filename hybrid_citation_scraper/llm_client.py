@@ -21,7 +21,9 @@ class LLMClient:
         self, 
         chunk_text: str, 
         chunk_id: int,
-        available_citations: Optional[Dict[str, str]] = None
+        available_citations: Optional[Dict[str, str]] = None,
+        paper_title: Optional[str] = None,
+        paper_abstract: Optional[str] = None
     ) -> List[ClaimObject]:
         """
         Extract claims from a text chunk using GPT-4o-mini.
@@ -32,13 +34,25 @@ class LLMClient:
             citation_list = "\n".join([f"{k}: {v[:100]}..." for k, v in list(available_citations.items())[:10]])
             citation_context = f"\n\nAvailable citations in this document:\n{citation_list}"
         
+        paper_context = ""
+        if paper_title or paper_abstract:
+            paper_context = "\n\nPaper Context:"
+            if paper_title:
+                paper_context += f"\nTitle: {paper_title}"
+            if paper_abstract:
+                abstract_preview = paper_abstract[:400] + "..." if len(paper_abstract) > 400 else paper_abstract
+                paper_context += f"\nAbstract: {abstract_preview}"
+        
         prompt = f"""You are analyzing an academic text for claims. Extract ALL claims (both quantitative and qualitative) from the text below.
+
+            IMPORTANT: Do NOT extract claims that are widely-known common knowledge or basic facts (e.g., "water boils at 100°C", "the Earth orbits the Sun", "DNA is a double helix"). Only extract claims that represent research findings, arguments, or assertions that would benefit from verification.
 
             For each claim, identify:
             1. The exact claim text
             2. Whether it's "quantitative" (involves numbers, statistics, measurements) or "qualitative" (descriptive, non-numerical)
             3. Any citation marker present (e.g., [1], (Smith, 2020), superscript numbers)
             4. Whether the claim is "objective" (fact-based) or "subjective" (opinion-based)
+            5. Whether the claim is "original" - a direct conclusion or contribution from THIS paper (not citing external sources)
 
             Return a JSON array of claims with this exact structure:
             [
@@ -46,7 +60,8 @@ class LLMClient:
                 "claim_text": "exact text of the claim",
                 "claim_type": "quantitative or qualitative",
                 "citation_marker": "[1] or null if no citation",
-                "classification": ["objective or subjective"]
+                "classification": ["objective or subjective"],
+                "is_original": true or false
             }}
             ]
 
@@ -54,7 +69,11 @@ class LLMClient:
             - A quantitative claim mentions specific numbers, percentages, rates, statistics, or measurements
             - Include the full sentence containing the claim
             - If no citation marker is visible, set citation_marker to null
-            - Be thorough - extract all claims, not just the most prominent ones
+            - Set is_original to true ONLY if: (a) no external citation is present AND (b) the claim is a conclusion/finding from THIS paper's own work, figures, tables, or experiments (considering the paper's title and abstract for context)
+            - Set is_original to false if the claim cites external sources, even if discussing the paper's own work
+            - SKIP claims that are common knowledge - do not include them in the output at all
+            - Be thorough - extract all non-trivial claims, not just the most prominent ones
+            {paper_context}
             {citation_context}
 
             Text to analyze:
@@ -101,6 +120,7 @@ class LLMClient:
                     citation_text=claim_data.get("citation_marker"),
                     citation_details=None,  # Will be populated later
                     classification=claim_data.get("classification", ["objective"]),
+                    is_original=claim_data.get("is_original", False),
                     location_in_text=LocationInText(
                         start=0,  # Would need more sophisticated tracking
                         end=0,

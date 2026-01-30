@@ -78,7 +78,9 @@ print(f"Total cost: ${cost_info['total_cost']:.4f}")
 ### Step 3: Claim Extraction (Single-Shot LLM)
 1. Process each chunk with GPT-4o-mini
 2. Extract claims with structured JSON output (via Pydantic)
+2.5. NOTE: THIS SKIPS COMMON-KNOWLEDGE CLAIMS NOT WORTH PROCESSING
 3. Classify claim type (quantitative/qualitative)
+3.5 NOTE: Original findings/claims are still stored, just not processed further for validation
 4. Detect citation markers in text
 5. Return typed ClaimObject instances
 
@@ -115,6 +117,9 @@ The `save_results()` method produces a JSON file with claims, citations, and sum
 - `summary` object → No corresponding model (generated dict)
 - `citations` dict → Plain dict (not a Pydantic model)
 
+**Field Descriptions:**
+- `is_original`: `true` if the claim is an original contribution from the paper itself (e.g., conclusions from the paper's own experiments, figures, or tables) without citing external sources. `false` if the claim cites external work. Both quantitative and qualitative claims can be original.
+
 ```json
 {
   "claims": [
@@ -134,6 +139,7 @@ The `save_results()` method produces a JSON file with claims, citations, and sum
         "raw_text": "Smith, J. (2023). Energy Prices Report..."
       },
       "classification": ["objective"],
+      "is_original": false,
       "location_in_text": {
         "start": 1234,
         "end": 1289,

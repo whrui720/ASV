@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .utils import (
     extract_text_from_pdf,
+    extract_title_and_abstract,
     locate_reference_section,
     detect_citation_style,
     parse_citations_deterministic,
@@ -39,6 +40,8 @@ class HybridClaimExtractor:
         self.llm_client = LLMClient()
         self.citations = {}
         self.claims = []
+        self.paper_title = None
+        self.paper_abstract = None
     
     def extract_citations(self, pdf_path: str) -> Dict[str, str]:
         """
@@ -102,7 +105,9 @@ class HybridClaimExtractor:
             claims = self.llm_client.extract_claims_from_chunk(
                 chunk['text'],
                 chunk['chunk_id'],
-                available_citations=self.citations
+                available_citations=self.citations,
+                paper_title=self.paper_title,
+                paper_abstract=self.paper_abstract
             )
             
             # Update location information
@@ -155,6 +160,17 @@ class HybridClaimExtractor:
         
         # Extract text
         full_text = extract_text_from_pdf(pdf_path)
+        
+        # Extract title and abstract for context
+        print("Extracting title and abstract...")
+        paper_metadata = extract_title_and_abstract(full_text)
+        self.paper_title = paper_metadata['title']
+        self.paper_abstract = paper_metadata['abstract']
+        
+        if self.paper_title:
+            print(f"✓ Title: {self.paper_title[:80]}...")
+        if self.paper_abstract:
+            print(f"✓ Abstract: {self.paper_abstract[:100]}...")
         
         # Extract citations
         self.extract_citations(pdf_path)
