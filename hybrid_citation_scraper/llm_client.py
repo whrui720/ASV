@@ -51,8 +51,7 @@ class LLMClient:
             1. The exact claim text
             2. Whether it's "quantitative" (involves numbers, statistics, measurements) or "qualitative" (descriptive, non-numerical)
             3. Any citation marker present (e.g., [1], (Smith, 2020), superscript numbers)
-            4. Whether the claim is "objective" (fact-based) or "subjective" (opinion-based)
-            5. Whether the claim is "original" - a direct conclusion or contribution from THIS paper (not citing external sources)
+            4. Whether the claim is "original" - a direct conclusion or contribution from THIS paper (not citing external sources)
 
             Return a JSON array of claims with this exact structure:
             [
@@ -60,7 +59,6 @@ class LLMClient:
                 "claim_text": "exact text of the claim",
                 "claim_type": "quantitative or qualitative",
                 "citation_marker": "[1] or null if no citation",
-                "classification": ["objective or subjective"],
                 "is_original": true or false
             }}
             ]
@@ -71,8 +69,10 @@ class LLMClient:
             - If no citation marker is visible, set citation_marker to null
             - Set is_original to true ONLY if: (a) no external citation is present AND (b) the claim is a conclusion/finding from THIS paper's own work, figures, tables, or experiments (considering the paper's title and abstract for context)
             - Set is_original to false if the claim cites external sources, even if discussing the paper's own work
+            - ONLY extract objective, fact-based claims - do NOT include subjective opinions, interpretations, or qualitative judgments
             - SKIP claims that are common knowledge - do not include them in the output at all
-            - Be thorough - extract all non-trivial claims, not just the most prominent ones
+            - SKIP claims that are subjective opinions (e.g., "This approach is promising", "The results are interesting")
+            - Be thorough - extract all non-trivial, objective claims, not just the most prominent ones
             {paper_context}
             {citation_context}
 
@@ -119,7 +119,6 @@ class LLMClient:
                     citation_found=claim_data.get("citation_marker") is not None,
                     citation_text=claim_data.get("citation_marker"),
                     citation_details=None,  # Will be populated later
-                    classification=claim_data.get("classification", ["objective"]),
                     is_original=claim_data.get("is_original", False),
                     location_in_text=LocationInText(
                         start=0,  # Would need more sophisticated tracking
@@ -184,6 +183,51 @@ class LLMClient:
         except Exception as e:
             print(f"Error parsing references with LLM: {e}")
             return {}
+    
+    def call_llm(self, prompt: str, response_format: str = "json") -> Any:
+        """
+        Generic LLM call method for validator and other modules.
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            response_format: "json" for JSON response, "text" for plain text
+            
+        Returns:
+            Parsed JSON dict if response_format="json", raw text otherwise
+        """
+        try:
+            if response_format == "json":
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    response_format={"type": "json_object"}
+                )
+            else:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2
+                )
+            
+            # Track tokens
+            if ENABLE_COST_TRACKING and response.usage:
+                self.total_input_tokens += response.usage.prompt_tokens
+                self.total_output_tokens += response.usage.completion_tokens
+            
+            content = response.choices[0].message.content
+            
+            if response_format == "json":
+                return json.loads(content or "{}")
+            else:
+                return content or ""
+        
+        except Exception as e:
+            print(f"Error in LLM call: {e}")
+            if response_format == "json":
+                return {}
+            else:
+                return ""
     
     def get_cost_summary(self) -> Dict[str, float]:
         """

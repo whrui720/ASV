@@ -22,6 +22,17 @@ class LocationInText(BaseModel):
     chunk_id: Optional[int] = None
 
 
+class FoundDatasetSource(BaseModel):
+    """Dataset source found by sourcefinder for originally uncited claims"""
+    source_url: str
+    source_type: str  # "data.gov", "kaggle", "arxiv", etc.
+    relevance_score: float
+    found_by_claim_id: str  # Original claim that triggered the search
+    reused_count: int = 0  # How many other claims reused this source
+    search_query: Optional[str] = None
+    found_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
 class ClaimObject(BaseModel):
     """Claim object from Step 1: Claim Identification + Citation Mapping"""
     claim_id: str
@@ -31,8 +42,9 @@ class ClaimObject(BaseModel):
     citation_id: Optional[str] = None  # Key to citations dict for batch processing
     citation_text: Optional[str] = None  # e.g., "[1]" or "(Smith, 2020)"
     citation_details: Optional[CitationDetails] = None
-    classification: List[str] = Field(default_factory=list, description="objective, subjective, etc.")
     is_original: bool = Field(default=False, description="True if claim is original contribution from paper (no external citation or references paper's own figures/tables)")
+    originally_uncited: bool = Field(default=False, description="True if citation was found by sourcefinder (not in original paper)")
+    found_source: Optional[FoundDatasetSource] = None  # Populated if originally_uncited=True
     location_in_text: Optional[LocationInText] = None
     
     @model_validator(mode='after')
@@ -45,71 +57,29 @@ class ClaimObject(BaseModel):
                 f"Original claims are from the paper's own work and should not cite external sources."
             )
         return self
-    
-
-class CitationSource(BaseModel):
-    """Source information for a claim"""
-    downloaded: bool = False
-    data_format: Optional[str] = None  # csv, json, pdf, etc.
-    platform: Optional[str] = None  # pandas, R, etc.
-    source_url: Optional[str] = None
-    local_path: Optional[str] = None
-
-
-class ClaimObjectAfterTreatment(BaseModel):
-    """Claim object from Step 2: Claim Type Treatment"""
-    claim_id: str
-    text: str
-    claim_type: str
-    citation_mapped: bool
-    citation_source: Optional[CitationSource] = None
-    treatment_notes: str
 
 
 class ValidationResult(BaseModel):
-    """Validation result details"""
-    is_factual: bool
-    is_appropriate: bool
+    """Result of validation for any claim"""
+    claim_id: str
+    claim_type: str  # Store original claim type (quantitative/qualitative)
+    originally_uncited: bool  # Track if claim was originally without citation
+    validated: bool
+    validation_method: str  # "truth_table", "llm_check", "python_script", "rag_search", "combined"
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    passed: bool  # True if claim is verified/valid
     explanation: str
+    sources_used: List[str] = Field(default_factory=list)
+    errors: Optional[str] = None
+    validation_metadata: Optional[Dict[str, Any]] = None
+    validated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
-class ValidationMetadata(BaseModel):
-    """Metadata about validation process"""
-    checked_by: str = "automated_agent"
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
-    model_used: Optional[str] = None
-
-
-class JudgementObject(BaseModel):
-    """Judgement object from Step 3: Claim Validation"""
-    claim_id: str
-    validation_type: str  # quantitative or qualitative
-    validation_code: Optional[str] = None  # Python code used for validation
-    result: ValidationResult
-    confidence_score: float = Field(..., ge=0.0, le=1.0)
-    validation_metadata: ValidationMetadata
-
-
-class ReportClaim(BaseModel):
-    """Claim summary for report"""
-    claim_id: str
-    text: str
-    judgement: ValidationResult
-    citation: Optional[Dict[str, str]] = None
-
-
-class ReportSummary(BaseModel):
-    """Summary statistics for report"""
-    total_claims: int
-    validated: int
-    issues_found: int
-    quantitative_claims: int = 0
-    qualitative_claims: int = 0
-
-
-class ReportObject(BaseModel):
-    """Report object from Step 4: Display"""
-    claims: List[ReportClaim]
-    summary: ReportSummary
-    source_document: str
-    generated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+class ValidationBatch(BaseModel):
+    """Results for a batch of claims sharing same citation"""
+    citation_id: str
+    citation_text: Optional[str] = None
+    download_successful: bool
+    source_path: Optional[str] = None
+    claim_results: List[ValidationResult]
+    batch_notes: str

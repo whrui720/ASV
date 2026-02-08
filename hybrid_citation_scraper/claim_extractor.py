@@ -149,6 +149,57 @@ class HybridClaimExtractor:
         
         return self.claims
     
+    def _sort_claims(self) -> None:
+        """
+        Sort claims by type and citation status for efficient downstream processing.
+        
+        NEW Order (for validator processing):
+        1. Qualitative claims without citations
+        2. Quantitative claims without citations
+        3. Qualitative claims with citations (grouped by citation_id)
+        4. Quantitative claims with citations (grouped by citation_id)
+        """
+        from collections import defaultdict
+        
+        # Separate into categories
+        qual_without_citation = []
+        quant_without_citation = []
+        qual_with_citation = defaultdict(list)
+        quant_with_citation = defaultdict(list)
+        
+        for claim in self.claims:
+            if claim.claim_type == "qualitative":
+                if claim.citation_id:
+                    qual_with_citation[claim.citation_id].append(claim)
+                else:
+                    qual_without_citation.append(claim)
+            else:  # quantitative
+                if claim.citation_id:
+                    quant_with_citation[claim.citation_id].append(claim)
+                else:
+                    quant_without_citation.append(claim)
+        
+        # Rebuild claims list in sorted order
+        sorted_claims = []
+        
+        # 1. Qualitative without citations
+        sorted_claims.extend(qual_without_citation)
+        
+        # 2. Quantitative without citations
+        sorted_claims.extend(quant_without_citation)
+        
+        # 3. Qualitative with citations (grouped by citation_id)
+        for citation_id in sorted(qual_with_citation.keys()):
+            sorted_claims.extend(qual_with_citation[citation_id])
+        
+        # 4. Quantitative with citations (grouped by citation_id)
+        for citation_id in sorted(quant_with_citation.keys()):
+            sorted_claims.extend(quant_with_citation[citation_id])
+        
+        self.claims = sorted_claims
+        
+        print(f"✓ Sorted {len(self.claims)} claims by type and citation status")
+    
     def process_pdf(self, pdf_path: str) -> Tuple[List[ClaimObject], Dict[str, str]]:
         """
         Complete processing pipeline for a PDF.
@@ -189,6 +240,9 @@ class HybridClaimExtractor:
         
         # Map citations to claims
         self.map_citations_to_claims()
+        
+        # Sort claims by type and citation status
+        self._sort_claims()
         
         # Print cost summary
         print(f"\n{'='*60}")
