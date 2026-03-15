@@ -1,15 +1,11 @@
-"""Validator - Main orchestrator for claim validation"""
+"""Validation tools package."""
 
-from .claim_validator import ClaimValidator
 from .truth_table_checker import TruthTableChecker
 from .llm_verifier import LLMVerifier
-from .quantitative_validator import QuantitativeValidator
-from .qualitative_validator import QualitativeValidator
+from .python_script_validator import PythonScriptValidator
 
 __all__ = [
-    'ClaimValidator',
     'TruthTableChecker',
     'LLMVerifier',
-    'QuantitativeValidator',
-    'QualitativeValidator'
+    'PythonScriptValidator',
 ]

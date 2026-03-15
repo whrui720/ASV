@@ -1,63 +1,21 @@
 # Validator Module
 
-Main orchestrator for the entire ASV pipeline. Coordinates the 3-stage validation process. The validator folder also contains all validation-related tools.
+Validation tools used by the ASV pipeline. This folder contains reusable validation primitives; orchestration is handled by the `orchestrator` package.
 
 ## Architecture
 
-The validator module is the **central orchestrator** that:
-1. Receives claims from `hybrid_citation_scraper`
-2. Processes them in the correct order
-3. Uses `sourcefinder_tools` utilities to find/download sources
-4. Validates claims using appropriate methods
-5. Outputs results in structured JSON format
+The validator module provides **validation tools** that:
+1. Check claims against fact-check APIs
+2. Perform LLM-based plausibility checks
+3. Expose reusable primitives for orchestration modules
 
-## Processing Order
+The claim-ordering pipeline and batch orchestration live in `orchestrator/claim_orchestrator.py`.
 
-Claims are validated in this specific order for optimal efficiency:
+## Orchestration Boundary
 
-### 1. Qualitative Claims WITHOUT Citations
-**Method**: Truth Table + LLM Check
-- Check Google Fact Check API for existing fact checks
-- Use LLM for plausibility verification
-- If EITHER passes → mark as valid
-- Fast, no source download needed
-
-### 2. Quantitative Claims WITHOUT Citations
-**Method**: Truth Table + LLM Check + Source Finding
-- Try truth table and LLM first
-- If insufficient confidence, use `sourcefinder_tools` to find datasets
-- Mark claims with `originally_uncited=True` and add found source
-- Add synthetic citation details
-- **Do NOT validate yet** - append to cited quantitative group
-
-### 3. Quantitative Claims WITH Citations (including originally uncited)
-**Method**: Python Script Generation + Execution
-- Batch by `citation_id`
-- Download dataset once per batch (using `dataset_downloader`)
-- If download fails → entire batch fails
-- Generate Python script to validate claim against dataset
-- Execute script with 30s timeout
-- Parse JSON output: `{"passed": bool, "confidence": float, "explanation": str}`
-
-### 4. Qualitative Claims WITH Citations
-**Method**: RAG + LLM Verification
-- Batch by `citation_id`
-- Download text source once per batch (using `text_downloader`)
-- If download fails → entire batch fails
-- Split source into chunks (~500 chars with overlap)
-- Use TF-IDF to retrieve top-K most relevant chunks
-- LLM verifies claim against retrieved chunks
-- Return confidence + supporting quotes
+Processing order and claim batching are implemented in the `orchestrator` package. This module intentionally excludes orchestration classes.
 
 ## Modules
-
-### claim_validator.py
-Main orchestrator with methods:
-- `process_claims()`: Entry point, routes to appropriate handlers
-- `_process_uncited_qualitative()`: Truth table + LLM
-- `_process_uncited_quantitative()`: Find sources, append to cited group
-- `_process_cited_quantitative()`: Batch validation with Python scripts
-- `_process_cited_qualitative()`: Batch validation with RAG
 
 ### truth_table_checker.py
 Query Google Fact Check API:
@@ -72,20 +30,12 @@ Basic LLM plausibility check:
 - Check scientific accuracy, logical consistency
 - Return `{plausible, confidence, reasoning}`
 
-### quantitative_validator.py
-Generate and execute Python scripts:
-- Generate script using LLM (prompt includes claim + dataset path)
-- Script loads dataset, performs calculations, outputs JSON
-- Execute with subprocess (30s timeout)
-- Parse JSON output into ValidationResult
+## Orchestration Modules
 
-### qualitative_validator.py
-RAG-based validation:
-- Split source text into chunks
-- TF-IDF vectorization for retrieval
-- Cosine similarity to find top-K chunks
-- LLM verifies claim against retrieved context
-- Return validation with supporting quotes
+Moved to `orchestrator/`:
+- `claim_orchestrator.py`
+- `process_quantitative.py`
+- `process_qualitative.py`
 
 ## Data Models
 
@@ -168,10 +118,10 @@ GOOGLE_FACT_CHECK_API_KEY = os.getenv('GOOGLE_FACT_CHECK_API_KEY')
 ## Usage
 
 ```python
-from validator import ClaimValidator
+from orchestrator import ClaimValidator
 from models import ClaimObject
 
-# Initialize validator
+# Initialize orchestrator
 validator = ClaimValidator(output_dir="validation_results")
 
 # Load claims from claim_extractor
@@ -179,13 +129,6 @@ claims = [...]  # List of ClaimObject
 
 # Process all claims
 results = validator.process_claims(claims)
-
-# Results are automatically saved to JSON files
-# Access results by type:
-qual_uncited = results["qualitative_uncited"]
-quant_uncited = results["quantitative_uncited"]
-qual_cited = results["qualitative_cited"]
-quant_cited = results["quantitative_cited"]
 ```
 
 ## Dependencies
@@ -226,14 +169,14 @@ from hybrid_citation_scraper import ClaimExtractor
 extractor = ClaimExtractor(api_key="...")
 claims = extractor.process_pdf("paper.pdf")
 
-# Pass to validator
-from validator import ClaimValidator
+# Pass to orchestrator
+from orchestrator import ClaimValidator
 validator = ClaimValidator()
 results = validator.process_claims(claims)
 ```
 
 ### Using sourcefinder_tools:
-The validator automatically uses sourcefinder utilities:
+The orchestrator automatically uses sourcefinder utilities:
 - `DatasetFinder`: Search for datasets, check reuse
 - `TextFinder`: Search for text sources
 - `DatasetDownloader`: Download CSV/JSON/Excel
@@ -241,15 +184,4 @@ The validator automatically uses sourcefinder utilities:
 
 ## Claim Ordering Logic
 
-The ordering is designed for efficiency:
-
-1. **Qualitative uncited first**: Fast truth table + LLM check
-2. **Quantitative uncited second**: Find sources, don't validate yet
-3. **Quantitative cited third**: Batch download + validate (includes found sources)
-4. **Qualitative cited last**: Batch download + RAG validation
-
-This ensures:
-- Datasets downloaded once per citation
-- Originally uncited claims get source info added
-- Batch processing maximizes efficiency
-- Failed downloads don't block other claim types
+The ordering logic remains unchanged and now lives in `orchestrator/claim_orchestrator.py`.

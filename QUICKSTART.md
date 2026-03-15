@@ -20,7 +20,7 @@ GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
 
 ```python
 from hybrid_citation_scraper import ClaimExtractor
-from validator import ClaimValidator
+from orchestrator import ClaimValidator
 
 # Step 1: Extract claims from PDF
 extractor = ClaimExtractor(api_key="your_openai_key")
@@ -64,7 +64,7 @@ print(f"\nTotal cost: ${cost_info['total_cost']:.4f}")
 ```python
 import json
 from models import ClaimObject
-from validator import ClaimValidator
+from orchestrator import ClaimValidator
 
 # Load claims from JSON
 with open("extracted_claims.json", "r") as f:
@@ -221,7 +221,7 @@ results = validator.process_claims(subset)
 ### Example 1: Process Single Paper
 ```python
 from hybrid_citation_scraper import ClaimExtractor
-from validator import ClaimValidator
+from orchestrator import ClaimValidator
 
 # Extract and validate
 extractor = ClaimExtractor(api_key="...")

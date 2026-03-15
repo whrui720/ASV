@@ -65,7 +65,7 @@ Given a body of text (academic paper, article, etc.), for each claim:
 
 **Output:** List of `ClaimObject` with citation mapping
 
-### Stage 2: Orchestration (`validator/`)
+### Stage 2: Orchestration (`orchestrator/`)
 
 **Purpose:** Main orchestrator for claim validation
 
@@ -148,7 +148,7 @@ JSON Output Files:
     "citation_text": Optional[str],
     "citation_details": Optional[CitationDetails],
     "is_original": bool,  # Paper's own contribution
-    "originally_uncited": bool,  # Source found by validator
+    "originally_uncited": bool,  # Source found by orchestrator
     "found_source": Optional[FoundDatasetSource]
 }
 ```
@@ -187,7 +187,7 @@ JSON Output Files:
 
 ```python
 from hybrid_citation_scraper import ClaimExtractor
-from validator import ClaimValidator
+from orchestrator import ClaimValidator
 
 # Stage 1: Extract claims
 extractor = ClaimExtractor(api_key="your_openai_key")
@@ -229,6 +229,19 @@ qual_cited = results["qualitative_cited"]
 
 ```
 ASV/
+├── docs/                          # Project documentation
+│   ├── README.md
+│   └── testing/
+│       ├── README.md
+│       ├── INSTALLATION_AND_USAGE.md
+│       ├── TESTING_GUIDE.md
+│       └── TEST_SUITE_SUMMARY.md
+│
+├── scripts/                       # Utility scripts
+│   ├── README.md
+│   ├── run_tests.py
+│   └── run_tests.ps1
+│
 ├── hybrid_citation_scraper/       # Stage 1: Claim extraction
 │   ├── claim_extractor.py
 │   ├── llm_client.py
@@ -236,13 +249,17 @@ ASV/
 │   ├── config.py
 │   └── README.md
 │
-├── validator/                     # Stage 2: Orchestration
-│   ├── claim_validator.py         # Main orchestrator
+├── orchestrator/                  # Stage 2: Orchestration
+│   ├── claim_orchestrator.py      # Main orchestrator
+│   ├── process_quantitative.py
+│   ├── process_qualitative.py
+│   └── __init__.py
+│
+├── validator/                     # Validation tools
 │   ├── truth_table_checker.py
 │   ├── llm_verifier.py
-│   ├── quantitative_validator.py
-│   ├── qualitative_validator.py
 │   ├── config.py
+│   ├── __init__.py
 │   └── README.md
 │
 ├── sourcefinder_tools/            # Stage 3: Utilities

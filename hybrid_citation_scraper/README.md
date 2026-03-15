@@ -239,25 +239,23 @@ REFERENCE_SECTION_THRESHOLD = 0.7     # Start searching at 70% through doc
 This module is **Stage 1** of the complete ASV pipeline:
 
 ```
-Stage 1: hybrid_citation_scraper (this module)
+Stage 1 (just mapping): hybrid_citation_scraper (this module)
     ↓ List[ClaimObject]
-Stage 2: validator (orchestrates validation)
-    ↓ Uses utilities
-Stage 3: sourcefinder_tools (finds/downloads sources)
-    ↓
-Results: JSON files with validation outcomes
+Stage 2: orchestrator (orchestrates validation)
+    ↓ Uses sourcefinder and validation tools
+Stage 3: Results: JSON files with validation outcomes
 ```
 
 To run the complete pipeline:
 ```python
 from hybrid_citation_scraper import HybridClaimExtractor
-from validator import ClaimValidator
+from orchestrator import ClaimValidator
 
 # Extract claims
 extractor = HybridClaimExtractor()
 claims = extractor.process_pdf("paper.pdf")
 
-# Validate claims (see validator module)
+# Validate claims (see orchestrator module)
 validator = ClaimValidator()
 results = validator.process_claims(claims)
 ```

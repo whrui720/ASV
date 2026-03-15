@@ -1,6 +1,6 @@
 # Sourcefinder Tools
 
-Utility tools for finding and downloading sources (datasets and text documents). These tools are used by the `validator` module to locate evidence for uncited claims. NOTE: This folder does not contain any tools for validation (e.g. truth table lookup, basic LLM checks, etc.); those validation tools (and logic) can all be found in the validator folder.
+Utility tools for finding and downloading sources (datasets and text documents). These tools are used by the `orchestrator` module to locate evidence for uncited claims. NOTE: This folder does not contain any tools for validation (e.g. truth table lookup, basic LLM checks, etc.); validation tools are in the `validator` folder and orchestration logic is in the `orchestrator` folder.
 
 ## Purpose
 
@@ -219,7 +219,7 @@ DOWNLOAD_TIMEOUT = 30  # seconds
 The validator uses these tools internally:
 
 ```python
-# In validator/claim_validator.py
+# In orchestrator/claim_orchestrator.py
 
 # Find dataset for uncited quantitative claim
 # DatasetFinder manages dataset reuse internally
