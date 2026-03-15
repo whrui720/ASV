@@ -8,7 +8,7 @@ from collections import defaultdict
 
 from models import ClaimObject, ValidationResult, ValidationBatch, CitationDetails
 from hybrid_citation_scraper.llm_client import LLMClient
-from sourcefinder_tools import DatasetFinder, TextFinder, DatasetDownloader, TextDownloader
+from sourcefinder import DatasetFinder, TextFinder, DatasetDownloader, TextDownloader
 from validator.truth_table_checker import TruthTableChecker
 from validator.llm_verifier import LLMVerifier
 from .process_quantitative import ProcessQuantitative
