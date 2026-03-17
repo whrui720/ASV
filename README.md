@@ -301,6 +301,11 @@ openpyxl>=3.1.0
 # .env file
 OPENAI_API_KEY=your_openai_key_here
 GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
+
+# Optional model tier overrides (task routing table uses these)
+LLM_MODEL_SMALL=gpt-4o-mini
+LLM_MODEL_MEDIUM=gpt-4.1-mini
+LLM_MODEL_STRONG=gpt-4.1
 ```
 
 ### Key Settings
@@ -319,6 +324,25 @@ GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
 **sourcefinder_tools/config.py:**
 - `DATASET_REUSE_CONFIDENCE_THRESHOLD = 0.75`
 - `DOWNLOAD_TIMEOUT = 30`
+
+### LLM Task Routing Table
+
+Configured in `llm_config.py` as `LLM_TASK_CONFIG`:
+
+| Task Key | Primary Use Case | Strength | Cost Tier | Default Model | Temperature |
+| --- | --- | --- | --- | --- | --- |
+| `claim_extraction` | Chunk-level claim extraction | small | low | `LLM_MODEL_SMALL` | 0.1 |
+| `reference_parsing` | Citation parsing fallback | small | low | `LLM_MODEL_SMALL` | 0.1 |
+| `plausibility_check` | Uncited qualitative plausibility | small | low | `LLM_MODEL_SMALL` | 0.2 |
+| `source_grounded_verification` | RAG-based claim/source verification | medium | medium | `LLM_MODEL_MEDIUM` | 0.15 |
+| `quant_script_generation` | Python script generation for quantitative checks | strong | high | `LLM_MODEL_STRONG` | 0.1 |
+| `dataset_reuse_decision` | Decide whether to reuse found dataset | small | low | `LLM_MODEL_SMALL` | 0.2 |
+| `generic` | Backward-compatible default path | small | low | `DEFAULT_LLM_MODEL` | `DEFAULT_LLM_TEMPERATURE` |
+
+Each task entry also includes optional budget and escalation fields:
+- `daily_budget_usd`
+- `escalate_to`
+- `escalate_if_confidence_below`
 
 ## Validation Methods
 

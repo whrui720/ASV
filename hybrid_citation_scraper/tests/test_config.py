@@ -1,8 +1,6 @@
 """Tests for hybrid_citation_scraper.config module"""
 
 import pytest
-import os
-from unittest.mock import patch
 from pathlib import Path
 
 
@@ -18,22 +16,10 @@ class TestConfigLoading:
         """Test that all required configuration variables are defined"""
         from hybrid_citation_scraper import config
         
-        assert hasattr(config, 'OPENAI_API_KEY')
-        assert hasattr(config, 'CLAIM_EXTRACTION_MODEL')
-        assert hasattr(config, 'CLAIM_EXTRACTION_TEMPERATURE')
         assert hasattr(config, 'CITATION_STYLES')
         assert hasattr(config, 'REFERENCE_KEYWORDS')
         assert hasattr(config, 'CHUNK_SIZE')
         assert hasattr(config, 'CHUNK_OVERLAP')
-        assert hasattr(config, 'ENABLE_COST_TRACKING')
-    
-    def test_model_configuration(self):
-        """Test model configuration values"""
-        from hybrid_citation_scraper import config
-        
-        assert config.CLAIM_EXTRACTION_MODEL == "gpt-4o-mini"
-        assert isinstance(config.CLAIM_EXTRACTION_TEMPERATURE, (int, float))
-        assert 0 <= config.CLAIM_EXTRACTION_TEMPERATURE <= 1
     
     def test_citation_styles_configuration(self):
         """Test citation styles are properly configured"""
@@ -63,35 +49,7 @@ class TestConfigLoading:
         assert config.CHUNK_OVERLAP >= 0
         assert config.CHUNK_OVERLAP < config.CHUNK_SIZE
     
-    def test_cost_tracking_setting(self):
-        """Test cost tracking setting"""
-        from hybrid_citation_scraper import config
-        
-        assert isinstance(config.ENABLE_COST_TRACKING, bool)
 
-
-class TestEnvironmentVariables:
-    """Tests for environment variable handling"""
-    
-    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key-123'}, clear=False)
-    def test_openai_api_key_loaded_from_env(self):
-        """Test that OPENAI_API_KEY is loaded from environment"""
-        # Need to reload config to pick up the env var
-        import importlib
-        from hybrid_citation_scraper import config
-        importlib.reload(config)
-        
-        # Note: The actual key might still be None if geminikey.env doesn't have it
-        # This test checks the mechanism exists
-        assert hasattr(config, 'OPENAI_API_KEY')
-    
-    @patch.dict(os.environ, {}, clear=True)
-    def test_missing_api_key_warning(self, capsys):
-        """Test that warning is shown when API key is missing"""
-        # This is tricky to test as config is already loaded
-        # We're mainly checking the config doesn't crash
-        from hybrid_citation_scraper import config
-        assert True  # Config loaded without crashing
 
 
 class TestCitationStylePatterns:

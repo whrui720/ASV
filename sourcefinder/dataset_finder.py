@@ -1,6 +1,5 @@
 """Dataset Finder - Search for data repositories for quantitative claims"""
 
-import json
 import logging
 from typing import List, Optional, Dict, Any
 from models import FoundDatasetSource
@@ -93,18 +92,12 @@ Return JSON: {{"can_reuse": true/false, "dataset_index": 1-{len(datasets)} or nu
 """
         
         try:
-            response = self.llm_client.client.chat.completions.create(
-                model=self.llm_client.model,
-                messages=[
-                    {"role": "system", "content": "You are a data analyst evaluating dataset applicability."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"}
+            result = self.llm_client.call_llm(
+                prompt,
+                response_format="json",
+                task_name="dataset_reuse_decision",
+                system_message="You are a data analyst evaluating dataset applicability.",
             )
-            
-            content = response.choices[0].message.content or "{}"
-            result = json.loads(content)
             
             if result.get('can_reuse') and result.get('confidence', 0) > 0.75:
                 idx = result.get('dataset_index')

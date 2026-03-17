@@ -67,7 +67,11 @@ class PythonScriptValidator:
         prompt = self._build_script_generation_prompt(claim_text, dataset_path)
 
         try:
-            response = self.llm_client.call_llm(prompt, response_format="text")
+            response = self.llm_client.call_llm(
+                prompt,
+                response_format="text",
+                task_name="quant_script_generation"
+            )
             return self._extract_code(response)
         except Exception as e:
             logger.error(f"Script generation failed: {str(e)}")

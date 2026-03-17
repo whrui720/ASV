@@ -29,8 +29,8 @@ class TestLLMClientInit:
     def test_init_uses_config_model(self, mock_openai):
         """Test that configured model is used"""
         client = LLMClient()
-        from hybrid_citation_scraper.config import CLAIM_EXTRACTION_MODEL
-        assert client.model == CLAIM_EXTRACTION_MODEL
+        from llm_config import DEFAULT_LLM_MODEL
+        assert client.model == DEFAULT_LLM_MODEL
 
 
 class TestExtractClaimsFromChunk:

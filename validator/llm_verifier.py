@@ -30,7 +30,11 @@ class LLMVerifier:
         prompt = self._build_verification_prompt(claim_text)
         
         try:
-            response = self.llm_client.call_llm(prompt, response_format="json")
+            response = self.llm_client.call_llm(
+                prompt,
+                response_format="json",
+                task_name="plausibility_check"
+            )
             
             # Parse response
             plausible = response.get('plausible', False)
@@ -106,7 +110,11 @@ Do NOT simply mark all claims as plausible. Be critical and evidence-based.
 
         prompt = self._build_source_verification_prompt(claim_text, relevant_chunks)
         try:
-            response = self.llm_client.call_llm(prompt, response_format="json")
+            response = self.llm_client.call_llm(
+                prompt,
+                response_format="json",
+                task_name="source_grounded_verification"
+            )
 
             return {
                 'passed': response.get('passed', False),

@@ -221,11 +221,6 @@ but only for claims with found citation(s) (e.g. the last two sections).
 Edit `config.py` to customize:
 
 ```python
-# LLM settings
-CLAIM_EXTRACTION_MODEL = "gpt-4o-mini"
-CLAIM_EXTRACTION_TEMPERATURE = 0.2
-ENABLE_COST_TRACKING = True
-
 # Chunking
 CHUNK_SIZE = 800                      # Tokens per chunk
 CHUNK_OVERLAP = 100                   # Character overlap between chunks
@@ -233,6 +228,9 @@ CHUNK_OVERLAP = 100                   # Character overlap between chunks
 # Reference section
 REFERENCE_SECTION_THRESHOLD = 0.7     # Start searching at 70% through doc
 ```
+
+Global LLM model routing lives in `llm_config.py` at the workspace root.
+Use that file to configure task-specific model tiers, temperatures, and budgets.
 
 ## Integration with Validation Pipeline
 

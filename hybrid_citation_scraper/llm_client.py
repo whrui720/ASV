@@ -4,7 +4,13 @@ import json
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 
-from .config import OPENAI_API_KEY, CLAIM_EXTRACTION_MODEL, CLAIM_EXTRACTION_TEMPERATURE, ENABLE_COST_TRACKING
+from llm_config import (
+    OPENAI_API_KEY,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_TEMPERATURE,
+    ENABLE_COST_TRACKING,
+    LLM_TASK_CONFIG,
+)
 from models import ClaimObject, CitationDetails, LocationInText
 
 
@@ -13,9 +19,56 @@ class LLMClient:
     
     def __init__(self):
         self.client = OpenAI(api_key=OPENAI_API_KEY)
-        self.model = CLAIM_EXTRACTION_MODEL
+        self.model = DEFAULT_LLM_MODEL
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+
+    def _get_task_config(self, task_name: str) -> Dict[str, Any]:
+        """Return task config with safe fallback."""
+        if task_name in LLM_TASK_CONFIG:
+            return LLM_TASK_CONFIG[task_name]
+        return LLM_TASK_CONFIG["generic"]
+
+    def _chat_completion(
+        self,
+        *,
+        prompt: str,
+        task_name: str,
+        response_format: str = "json",
+        system_message: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ):
+        """Centralized OpenAI chat completion call with per-task routing."""
+        task_cfg = self._get_task_config(task_name)
+        model = task_cfg.get("model", self.model)
+        temp = task_cfg.get("temperature", DEFAULT_LLM_TEMPERATURE)
+        if temperature is not None:
+            temp = temperature
+
+        messages = []
+        if system_message:
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": prompt})
+
+        if response_format == "json":
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temp,
+                response_format={"type": "json_object"},
+            )
+        else:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temp,
+            )
+
+        if ENABLE_COST_TRACKING and response.usage:
+            self.total_input_tokens += response.usage.prompt_tokens
+            self.total_output_tokens += response.usage.completion_tokens
+
+        return response
         
     def extract_claims_from_chunk(
         self, 
@@ -82,20 +135,12 @@ class LLMClient:
             Return only the JSON array, no additional text."""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a precise academic text analyzer that extracts claims and citations. Always return valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=CLAIM_EXTRACTION_TEMPERATURE,
-                response_format={"type": "json_object"}
+            response = self._chat_completion(
+                prompt=prompt,
+                task_name="claim_extraction",
+                response_format="json",
+                system_message="You are a precise academic text analyzer that extracts claims and citations. Always return valid JSON.",
             )
-            
-            # Track token usage
-            if ENABLE_COST_TRACKING and response.usage:
-                self.total_input_tokens += response.usage.prompt_tokens
-                self.total_output_tokens += response.usage.completion_tokens
             
             # Parse response
             content = response.choices[0].message.content
@@ -155,19 +200,12 @@ class LLMClient:
             Return only the JSON object, no additional text."""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a citation parser that extracts structured information from reference sections. Always return valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"}
+            response = self._chat_completion(
+                prompt=prompt,
+                task_name="reference_parsing",
+                response_format="json",
+                system_message="You are a citation parser that extracts structured information from reference sections. Always return valid JSON.",
             )
-            
-            if ENABLE_COST_TRACKING and response.usage:
-                self.total_input_tokens += response.usage.prompt_tokens
-                self.total_output_tokens += response.usage.completion_tokens
             
             content = response.choices[0].message.content
             if not content:
@@ -184,7 +222,14 @@ class LLMClient:
             print(f"Error parsing references with LLM: {e}")
             return {}
     
-    def call_llm(self, prompt: str, response_format: str = "json") -> Any:
+    def call_llm(
+        self,
+        prompt: str,
+        response_format: str = "json",
+        task_name: str = "generic",
+        system_message: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> Any:
         """
         Generic LLM call method for validator and other modules.
         
@@ -196,24 +241,13 @@ class LLMClient:
             Parsed JSON dict if response_format="json", raw text otherwise
         """
         try:
-            if response_format == "json":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                    response_format={"type": "json_object"}
-                )
-            else:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2
-                )
-            
-            # Track tokens
-            if ENABLE_COST_TRACKING and response.usage:
-                self.total_input_tokens += response.usage.prompt_tokens
-                self.total_output_tokens += response.usage.completion_tokens
+            response = self._chat_completion(
+                prompt=prompt,
+                task_name=task_name,
+                response_format=response_format,
+                system_message=system_message,
+                temperature=temperature,
+            )
             
             content = response.choices[0].message.content
             

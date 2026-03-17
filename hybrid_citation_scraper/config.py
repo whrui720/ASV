@@ -1,20 +1,5 @@
 """Configuration for the agentic citation scraper"""
 
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv(Path(__file__).parent.parent / "geminikey.env")
-
-# API Configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    print("Warning: OPENAI_API_KEY not found in environment variables")
-
-# Model Settings
-CLAIM_EXTRACTION_MODEL = "gpt-4o-mini"  # Cost: $0.150/M input tokens
-CLAIM_EXTRACTION_TEMPERATURE = 0.1  # Low temperature for structured output
 
 # Citation Detection Settings
 CITATION_STYLES = {
@@ -39,6 +24,3 @@ REFERENCE_KEYWORDS = [
 # Chunking Settings
 CHUNK_SIZE = 800  # tokens per chunk
 CHUNK_OVERLAP = 100  # overlap between chunks
-
-# Cost Tracking
-ENABLE_COST_TRACKING = True
