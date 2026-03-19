@@ -1,24 +1,24 @@
-"""LLM client for GPT-4o-mini interactions"""
+"""LLM client for Gemini model interactions"""
 
 import json
 from typing import List, Dict, Any, Optional
-from openai import OpenAI
+import google.genai as genai
+import google.genai.types as types
 
 from llm_config import (
-    OPENAI_API_KEY,
+    GEMINI_API_KEY,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_TEMPERATURE,
     ENABLE_COST_TRACKING,
     LLM_TASK_CONFIG,
 )
-from models import ClaimObject, CitationDetails, LocationInText
-
+from models import ClaimObject, LocationInText
 
 class LLMClient:
-    """Client for interacting with OpenAI API"""
-    
+    """Client for interacting with Gemini API"""
+
     def __init__(self):
-        self.client = OpenAI(api_key=OPENAI_API_KEY)
+        self.client = genai.Client(api_key=GEMINI_API_KEY)
         self.model = DEFAULT_LLM_MODEL
         self.total_input_tokens = 0
         self.total_output_tokens = 0
@@ -38,55 +38,49 @@ class LLMClient:
         system_message: Optional[str] = None,
         temperature: Optional[float] = None,
     ):
-        """Centralized OpenAI chat completion call with per-task routing."""
+        """Centralized Gemini chat completion call with per-task routing."""
         task_cfg = self._get_task_config(task_name)
-        model = task_cfg.get("model", self.model)
+        model_name = task_cfg.get("model", self.model)
         temp = task_cfg.get("temperature", DEFAULT_LLM_TEMPERATURE)
         if temperature is not None:
             temp = temperature
 
-        messages = []
-        if system_message:
-            messages.append({"role": "system", "content": system_message})
-        messages.append({"role": "user", "content": prompt})
+        generation_config = types.GenerateContentConfig(
+            temperature=temp,
+            response_mime_type="application/json" if response_format == "json" else None,
+            system_instruction=system_message,
+        )
 
-        if response_format == "json":
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temp,
-                response_format={"type": "json_object"},
-            )
-        else:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temp,
-            )
+        response = self.client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=generation_config,
+        )
 
-        if ENABLE_COST_TRACKING and response.usage:
-            self.total_input_tokens += response.usage.prompt_tokens
-            self.total_output_tokens += response.usage.completion_tokens
+        usage = getattr(response, "usage_metadata", None)
+        if ENABLE_COST_TRACKING and usage:
+            self.total_input_tokens += getattr(usage, "prompt_token_count", 0) or 0
+            self.total_output_tokens += getattr(usage, "candidates_token_count", 0) or 0
 
         return response
-        
+
     def extract_claims_from_chunk(
-        self, 
-        chunk_text: str, 
+        self,
+        chunk_text: str,
         chunk_id: int,
         available_citations: Optional[Dict[str, str]] = None,
         paper_title: Optional[str] = None,
         paper_abstract: Optional[str] = None
     ) -> List[ClaimObject]:
         """
-        Extract claims from a text chunk using GPT-4o-mini.
+        Extract claims from a text chunk using Gemini.
         Returns list of ClaimObject instances.
         """
         citation_context = ""
         if available_citations:
             citation_list = "\n".join([f"{k}: {v[:100]}..." for k, v in list(available_citations.items())[:10]])
             citation_context = f"\n\nAvailable citations in this document:\n{citation_list}"
-        
+
         paper_context = ""
         if paper_title or paper_abstract:
             paper_context = "\n\nPaper Context:"
@@ -95,7 +89,7 @@ class LLMClient:
             if paper_abstract:
                 abstract_preview = paper_abstract[:400] + "..." if len(paper_abstract) > 400 else paper_abstract
                 paper_context += f"\nAbstract: {abstract_preview}"
-        
+
         prompt = f"""You are analyzing an academic text for claims. Extract ALL claims (both quantitative and qualitative) from the text below.
 
             IMPORTANT: Do NOT extract claims that are widely-known common knowledge or basic facts (e.g., "water boils at 100°C", "the Earth orbits the Sun", "DNA is a double helix"). Only extract claims that represent research findings, arguments, or assertions that would benefit from verification.
@@ -141,22 +135,21 @@ class LLMClient:
                 response_format="json",
                 system_message="You are a precise academic text analyzer that extracts claims and citations. Always return valid JSON.",
             )
-            
-            # Parse response
-            content = response.choices[0].message.content
+
+            content = response.text
             if not content:
                 return []
-            
+
             result = json.loads(content)
-            
+
             # Handle both {"claims": [...]} and direct array formats
             claims_data = result.get("claims", result) if isinstance(result, dict) else result
-            
+
             # Convert to ClaimObject instances
             claims = []
             for idx, claim_data in enumerate(claims_data):
                 claim_id = f"claim_{chunk_id}_{idx}"
-                
+
                 claim = ClaimObject(
                     claim_id=claim_id,
                     text=claim_data.get("claim_text", ""),
@@ -172,13 +165,13 @@ class LLMClient:
                     )
                 )
                 claims.append(claim)
-            
+
             return claims
-            
+
         except Exception as e:
             print(f"Error extracting claims from chunk {chunk_id}: {e}")
             return []
-    
+
     def parse_references_with_llm(self, ref_section: str) -> Dict[str, str]:
         """
         Parse reference section using LLM when deterministic parsing fails.
@@ -206,22 +199,22 @@ class LLMClient:
                 response_format="json",
                 system_message="You are a citation parser that extracts structured information from reference sections. Always return valid JSON.",
             )
-            
-            content = response.choices[0].message.content
+
+            content = response.text
             if not content:
                 return {}
-            
+
             result = json.loads(content)
-            
+
             # Handle wrapped format
             if "citations" in result:
                 return result["citations"]
             return result
-            
+
         except Exception as e:
             print(f"Error parsing references with LLM: {e}")
             return {}
-    
+
     def call_llm(
         self,
         prompt: str,
@@ -232,11 +225,11 @@ class LLMClient:
     ) -> Any:
         """
         Generic LLM call method for validator and other modules.
-        
+
         Args:
             prompt: The prompt to send to the LLM
             response_format: "json" for JSON response, "text" for plain text
-            
+
         Returns:
             Parsed JSON dict if response_format="json", raw text otherwise
         """
@@ -248,30 +241,30 @@ class LLMClient:
                 system_message=system_message,
                 temperature=temperature,
             )
-            
-            content = response.choices[0].message.content
-            
+
+            content = response.text
+
             if response_format == "json":
                 return json.loads(content or "{}")
             else:
                 return content or ""
-        
+
         except Exception as e:
             print(f"Error in LLM call: {e}")
             if response_format == "json":
                 return {}
             else:
                 return ""
-    
+
     def get_cost_summary(self) -> Dict[str, float]:
         """
         Calculate total cost based on token usage.
-        GPT-4o-mini pricing: $0.150/M input tokens, $0.600/M output tokens
+        gemini-2.0-flash pricing: $0.10/M input tokens, $0.40/M output tokens
         """
-        input_cost = (self.total_input_tokens / 1_000_000) * 0.150
-        output_cost = (self.total_output_tokens / 1_000_000) * 0.600
+        input_cost = (self.total_input_tokens / 1_000_000) * 0.10
+        output_cost = (self.total_output_tokens / 1_000_000) * 0.40
         total_cost = input_cost + output_cost
-        
+
         return {
             "input_tokens": self.total_input_tokens,
             "output_tokens": self.total_output_tokens,

@@ -5,20 +5,20 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables once at workspace level.
-load_dotenv(Path(__file__).parent / "geminikey.env")
+load_dotenv(Path(__file__).parent / ".env")
 
 # API Configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    print("Warning: OPENAI_API_KEY not found in environment variables")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    print("Warning: GEMINI_API_KEY not found in environment variables")
 
 # Cost tracking for all LLM calls
 ENABLE_COST_TRACKING = True
 
 # Model tier overrides
-LLM_MODEL_SMALL = os.getenv("LLM_MODEL_SMALL", "gpt-4o-mini")
-LLM_MODEL_MEDIUM = os.getenv("LLM_MODEL_MEDIUM", "gpt-4.1-mini")
-LLM_MODEL_STRONG = os.getenv("LLM_MODEL_STRONG", "gpt-4.1")
+LLM_MODEL_SMALL = os.getenv("LLM_MODEL_SMALL", "gemini-2.5-flash-lite")
+LLM_MODEL_MEDIUM = os.getenv("LLM_MODEL_MEDIUM", "gemini-2.5-flash")
+LLM_MODEL_STRONG = os.getenv("LLM_MODEL_STRONG", "gemini-2.5-pro")
 
 # Generic fallback defaults
 DEFAULT_LLM_MODEL = LLM_MODEL_SMALL

@@ -95,14 +95,16 @@ def detect_citation_style(ref_section: str) -> Optional[str]:
     """
     if not ref_section:
         return None
-    
-    # Check first few lines for pattern matching
-    first_lines = '\n'.join(ref_section.split('\n')[:5])
-    
+
+    # Skip blank lines; check up to 20 non-blank lines so PDF extraction
+    # artifacts (blank lines, page headers) don't hide the first real entry.
+    non_blank_lines = [l for l in ref_section.split('\n') if l.strip()][:20]
+    check_text = '\n'.join(non_blank_lines)
+
     for style, pattern in CITATION_STYLES.items():
-        if re.search(pattern, first_lines, re.MULTILINE):
+        if re.search(pattern, check_text, re.MULTILINE):
             return style
-    
+
     return None
 
 
@@ -112,53 +114,59 @@ def parse_citations_deterministic(ref_section: str, citation_style: str) -> Dict
     Returns dict mapping citation_id -> citation_text
     """
     citations = {}
-    
-    if citation_style == 'numeric':
-        # Parse "1. Author et al. Title..."
-        pattern = r'^(\d+)\.\s+(.+?)(?=^\d+\.|$)'
-        matches = re.finditer(pattern, ref_section, re.MULTILINE | re.DOTALL)
-        
-        for match in matches:
-            citation_id = match.group(1)
-            citation_text = match.group(2).strip()
-            # Clean up extra whitespace
-            citation_text = re.sub(r'\s+', ' ', citation_text)
-            citations[citation_id] = citation_text
-    
+
+    if citation_style in ('numeric', 'vancouver'):
+        # Split at lines that start a new numbered entry: "N." or "N " followed
+        # by an uppercase letter.  This avoids splitting on mid-entry lines like
+        # "73: 3210" (journal volume) which start with a digit but no uppercase.
+        entries = re.split(r'\n(?=\d+\.?\s+[A-Z])', ref_section)
+        for entry in entries:
+            entry = entry.strip()
+            if not entry:
+                continue
+            m = re.match(r'^(\d+)\.?\s+(.+)', entry, re.DOTALL)
+            if m:
+                key = m.group(1)
+                text = re.sub(r'\s+', ' ', m.group(2)).strip()
+                citations[key] = text
+
+    elif citation_style == 'bracket_numeric':
+        # Split at lines starting "[N]"
+        entries = re.split(r'\n(?=\[\d+\]\s)', ref_section)
+        for entry in entries:
+            entry = entry.strip()
+            if not entry:
+                continue
+            m = re.match(r'^\[(\d+)\]\s+(.+)', entry, re.DOTALL)
+            if m:
+                key = m.group(1)
+                text = re.sub(r'\s+', ' ', m.group(2)).strip()
+                citations[key] = text
+
     elif citation_style == 'apa':
         # Parse "Smith, J. (2020). Title..."
-        # This is simplified - full APA parsing is complex
         lines = ref_section.split('\n')
-        current_citation = []
-        
+        current_citation: List[str] = []
+
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            
-            # Check if line starts with author pattern
             if re.match(r'^\w+,\s+\w\.', line):
-                # Save previous citation if exists
                 if current_citation:
                     text = ' '.join(current_citation)
-                    # Use first author as key
                     key = current_citation[0].split(',')[0].strip()
                     citations[key] = text
-                # Start new citation
                 current_citation = [line]
             else:
-                # Continue previous citation
                 if current_citation:
                     current_citation.append(line)
-        
-        # Save last citation
+
         if current_citation:
             text = ' '.join(current_citation)
             key = current_citation[0].split(',')[0].strip()
             citations[key] = text
-    
-    # Add other citation styles as needed
-    
+
     return citations
 
 
@@ -169,13 +177,15 @@ def validate_citations(citations: Dict[str, str], min_citations: int = 1) -> boo
     """
     if len(citations) < min_citations:
         return False
-    
-    # Check that citations aren't too short or too long
-    for citation_text in citations.values():
-        if len(citation_text) < 20 or len(citation_text) > 2000:
-            return False
-    
-    return True
+
+    # Require at least 80% of entries to fall within a plausible length range.
+    # A single outlier (very long author list, or a stray fragment) should not
+    # discard an otherwise good parse.
+    valid_count = sum(
+        1 for text in citations.values()
+        if 15 <= len(text) <= 2000
+    )
+    return valid_count >= max(1, len(citations) * 0.8)
 
 
 def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:

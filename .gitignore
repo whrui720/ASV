@@ -10,12 +10,16 @@ pymupdf-venv/
 bin/
 .vscode/
 
-# Output/data directories 
+# Input pdfs
+pdfs/
+
+# Output/data directories
 datasets/
 text_sources/
 overviews/
 papers/
 pyscripts/
+hybrid_citation_scraper/test_outputs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

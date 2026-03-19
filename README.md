@@ -37,7 +37,7 @@ Given a body of text (academic paper, article, etc.), for each claim:
               ▼
 ┌─────────────────────────────┐
 │   Stage 3: Utilities        │
-│   (sourcefinder_tools)      │
+│   (sourcefinder)            │
 │  - Find datasets/texts      │
 │  - Download sources         │
 └─────────────────────────────┘
@@ -100,7 +100,7 @@ Given a body of text (academic paper, article, etc.), for each claim:
 - Tracks found datasets for reuse
 - Separate JSON outputs per claim type
 
-### Stage 3: Utilities (`sourcefinder_tools/`)
+### Stage 3: Utilities (`sourcefinder/`)
 
 **Purpose:** Tools for finding and downloading sources
 
@@ -186,11 +186,11 @@ JSON Output Files:
 ### Complete Pipeline
 
 ```python
-from hybrid_citation_scraper import ClaimExtractor
+from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
 from orchestrator import ClaimValidator
 
 # Stage 1: Extract claims
-extractor = ClaimExtractor(api_key="your_openai_key")
+extractor = HybridClaimExtractor()
 claims = extractor.process_pdf("research_paper.pdf")
 
 # Stage 2: Validate claims
@@ -262,7 +262,7 @@ ASV/
 │   ├── __init__.py
 │   └── README.md
 │
-├── sourcefinder_tools/            # Stage 3: Utilities
+├── sourcefinder/                  # Stage 3: Utilities
 │   ├── dataset_finder.py
 │   ├── text_finder.py
 │   ├── dataset_downloader.py
@@ -278,7 +278,7 @@ ASV/
 ## Dependencies
 
 ```txt
-openai>=1.0.0
+google-generativeai>=0.8.0
 langchain>=0.1.0
 pypdf>=3.0.0
 pydantic>=2.0.0
@@ -299,13 +299,13 @@ openpyxl>=3.1.0
 
 ```bash
 # .env file
-OPENAI_API_KEY=your_openai_key_here
+GEMINI_API_KEY=your_gemini_key_here
 GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
 
 # Optional model tier overrides (task routing table uses these)
-LLM_MODEL_SMALL=gpt-4o-mini
-LLM_MODEL_MEDIUM=gpt-4.1-mini
-LLM_MODEL_STRONG=gpt-4.1
+LLM_MODEL_SMALL=gemini-2.0-flash-lite
+LLM_MODEL_MEDIUM=gemini-2.0-flash
+LLM_MODEL_STRONG=gemini-2.5-pro
 ```
 
 ### Key Settings
@@ -321,7 +321,7 @@ LLM_MODEL_STRONG=gpt-4.1
 - `RAG_TOP_K = 3`
 - `SCRIPT_TIMEOUT_SECONDS = 30`
 
-**sourcefinder_tools/config.py:**
+**sourcefinder/config.py:**
 - `DATASET_REUSE_CONFIDENCE_THRESHOLD = 0.75`
 - `DOWNLOAD_TIMEOUT = 30`
 
@@ -352,7 +352,7 @@ Each task entry also includes optional budget and escalation fields:
 - Interpret textual ratings
 
 ### LLM Verification
-- Assess plausibility using GPT-4o-mini
+- Assess plausibility using the configured Gemini tier
 - Check scientific accuracy, logical consistency
 - Return confidence + reasoning
 
@@ -412,7 +412,7 @@ This order maximizes efficiency by:
 See module-specific READMEs:
 - [Claim Extraction](hybrid_citation_scraper/README.md)
 - [Validator](validator/README.md)
-- [Sourcefinder Tools](sourcefinder_tools/README.md)
+- [Sourcefinder](sourcefinder/README.md)
 
 ## License
 

@@ -3,7 +3,8 @@
 
 # Citation Detection Settings
 CITATION_STYLES = {
-    'numeric': r'^\d+\.\s+\w+',  # "1. Author..."
+    'numeric': r'^\d+\.?\s+\w+',       # "1. Author..." or "1 Author..." (period optional)
+    'bracket_numeric': r'^\[\d+\]\s+\w+',  # "[1] Author..."
     'apa': r'^\w+,\s+\w\.\s+\(\d{4}\)',  # "Smith, J. (2020)..."
     'mla': r'^\w+,\s+\w+\.\s+["\']',  # "Smith, John. "Title..."
     'chicago': r'^\w+,\s+\w+,\s+and\s+\w+',  # "Smith, John, and..."

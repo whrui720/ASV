@@ -58,7 +58,7 @@ for claim in claims:
 
 ### Input
 - **PDF file path** (string)
-- **OpenAI API key** (via environment variable)
+- **Gemini API key** (via environment variable)
 
 ### Output 
 
@@ -186,7 +186,7 @@ but only for claims with found citation(s) (e.g. the last two sections).
 - Load PDF text with LangChain PyPDFLoader
 - Locate reference section (70% heuristic)
 - **Try:** Deterministic regex parsing first (APA, MLA, numeric, author-year formats)
-- **Fallback:** GPT-4o-mini if regex fails
+- **Fallback:** configured Gemini model if regex fails
 
 #### 2. Text Chunking (Sentence-Boundary)
 - Remove reference section from body
@@ -196,7 +196,7 @@ but only for claims with found citation(s) (e.g. the last two sections).
 
 #### 3. Claim Extraction (LLM with Smart Filtering)
 - Extract paper title and abstract for context
-- Send each chunk to GPT-4o-mini
+- Send each chunk to the configured Gemini model
 - LLM identifies:
   - All objective, fact-based claims (quantitative and qualitative)
   - Citation markers in text
@@ -212,7 +212,7 @@ but only for claims with found citation(s) (e.g. the last two sections).
 - Sort claims by type and citation status
 - Groups claims by citation for batch processing
 - Prioritizes fast-to-validate claims first
-- Monitors OpenAI API token usage and costs in real-time
+- Monitors Gemini API token usage and costs in real-time
 - Return structured results
 
 
@@ -263,7 +263,7 @@ See [main README](../README.md) for complete pipeline documentation.
 ## Module Files
 
 - `claim_extractor.py` - Main extraction pipeline
-- `llm_client.py` - OpenAI API wrapper
+- `llm_client.py` - Gemini API wrapper
 - `utils.py` - Text processing utilities
 - `config.py` - Configuration settings
 - `__init__.py` - Module exports
@@ -277,9 +277,9 @@ All models defined in [`../models.py`](../models.py):
 
 ## Cost Information
 
-**GPT-4o-mini Pricing:**
-- Input: $0.150 per 1M tokens
-- Output: $0.600 per 1M tokens
+**Default Cost Calculation in Code:**
+- Input: $0.10 per 1M tokens
+- Output: $0.40 per 1M tokens
 
 **Per Paper:**
 - 10-page paper: ~$0.002-0.003
@@ -301,7 +301,7 @@ print(f"Total cost: ${cost_info['total_cost']:.4f}")
 ## Troubleshooting
 
 **"No API key found"**
-- Set environment variable: `OPENAI_API_KEY=sk-...`
+- Set environment variable: `GEMINI_API_KEY=...`
 
 **"No claims extracted"**
 - Check PDF is text-based (not scanned image)
@@ -326,5 +326,5 @@ print(f"Total cost: ${cost_info['total_cost']:.4f}")
 
 After extraction, claims are ready for validation:
 - See [`../validator/`](../validator/) for claim validation
-- See [`../sourcefinder_tools/`](../sourcefinder_tools/) for source finding
+- See [`../sourcefinder/`](../sourcefinder/) for source finding
 - See [`../README.md`](../README.md) for complete pipeline

@@ -10,8 +10,9 @@ pip install -r requirements.txt
 2. **Set up environment variables:**
 Create a `.env` file in the project root:
 ```bash
-OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
+
 ```
 
 ## Basic Usage
@@ -19,11 +20,11 @@ GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
 ### Complete Pipeline (Extract + Validate)
 
 ```python
-from hybrid_citation_scraper import ClaimExtractor
+from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
 from orchestrator import ClaimValidator
 
 # Step 1: Extract claims from PDF
-extractor = ClaimExtractor(api_key="your_openai_key")
+extractor = HybridClaimExtractor()
 claims = extractor.process_pdf("research_paper.pdf")
 
 print(f"Extracted {len(claims)} claims")
@@ -39,9 +40,9 @@ print(f"Results saved to validation_results/")
 ### Extract Claims Only
 
 ```python
-from hybrid_citation_scraper import ClaimExtractor
+from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
 
-extractor = ClaimExtractor(api_key="your_openai_key")
+extractor = HybridClaimExtractor()
 claims = extractor.process_pdf("paper.pdf")
 
 # Access claims
@@ -177,7 +178,7 @@ REFERENCE_SECTION_THRESHOLD = 0.7  # 70% through document
 
 ### Adjust Dataset Reuse
 
-Edit `sourcefinder_tools/config.py`:
+Edit `sourcefinder/config.py`:
 ```python
 DATASET_REUSE_CONFIDENCE_THRESHOLD = 0.75  # Higher = less reuse
 DOWNLOAD_TIMEOUT = 30  # Seconds
@@ -188,7 +189,7 @@ DOWNLOAD_TIMEOUT = 30  # Seconds
 ### "No API key found"
 Make sure your `.env` file exists and contains:
 ```
-OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
 ```
 
 ### "sklearn import error"
@@ -200,7 +201,7 @@ pip install scikit-learn
 ### "Dataset download failed"
 - Check the citation URL is valid
 - Check network connection
-- Check timeout settings in `sourcefinder_tools/config.py`
+- Check timeout settings in `sourcefinder/config.py`
 
 ### "Script execution timeout"
 Increase timeout in `validator/config.py`:
@@ -220,11 +221,11 @@ results = validator.process_claims(subset)
 
 ### Example 1: Process Single Paper
 ```python
-from hybrid_citation_scraper import ClaimExtractor
+from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
 from orchestrator import ClaimValidator
 
 # Extract and validate
-extractor = ClaimExtractor(api_key="...")
+extractor = HybridClaimExtractor()
 claims = extractor.process_pdf("paper.pdf")
 
 validator = ClaimValidator()
@@ -238,7 +239,7 @@ print(f"Qualitative uncited: {passed}/{total} passed")
 
 ### Example 2: Filter Only Quantitative Claims
 ```python
-extractor = ClaimExtractor(api_key="...")
+extractor = HybridClaimExtractor()
 all_claims = extractor.process_pdf("paper.pdf")
 
 # Filter quantitative only
@@ -269,7 +270,7 @@ for claim in claims:
 
 ## Cost Estimates
 
-**GPT-4o-mini pricing:**
+**Gemini pricing:**
 - Input: $0.150 per million tokens
 - Output: $0.600 per million tokens
 
@@ -293,5 +294,5 @@ for claim in claims:
 See module-specific documentation:
 - [Claim Extraction](hybrid_citation_scraper/README.md)
 - [Validator](validator/README.md)
-- [Sourcefinder Tools](sourcefinder_tools/README.md)
+- [Sourcefinder](sourcefinder/README.md)
 - [Implementation Details](IMPLEMENTATION.md)
