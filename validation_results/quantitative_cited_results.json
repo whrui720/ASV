@@ -1,0 +1,398 @@
+[
+  {
+    "citation_id": "found_claim_1_7",
+    "citation_text": "[Found: data.gov]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_1_7",
+        "claim_type": "quantitative",
+        "originally_uncited": true,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "Missing optional dependency 'openpyxl'.  Use pip or conda to install openpyxl.",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:49.325523"
+      },
+      {
+        "claim_id": "claim_1_7",
+        "claim_type": "quantitative",
+        "originally_uncited": true,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "Missing optional dependency 'openpyxl'.  Use pip or conda to install openpyxl.",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:49.325523"
+      }
+    ],
+    "batch_notes": "Download failed: Missing optional dependency 'openpyxl'.  Use pip or conda to install openpyxl."
+  },
+  {
+    "citation_id": "found_claim_14_7",
+    "citation_text": "[Found: data.gov]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_14_7",
+        "claim_type": "quantitative",
+        "originally_uncited": true,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "Error tokenizing data. C error: Expected 1 fields in line 10, saw 2\n",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:54.594385"
+      },
+      {
+        "claim_id": "claim_14_7",
+        "claim_type": "quantitative",
+        "originally_uncited": true,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "Error tokenizing data. C error: Expected 1 fields in line 10, saw 2\n",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:54.594385"
+      }
+    ],
+    "batch_notes": "Download failed: Error tokenizing data. C error: Expected 1 fields in line 10, saw 2\n"
+  },
+  {
+    "citation_id": "10",
+    "citation_text": "10",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_2_5",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:54.807829"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "109",
+    "citation_text": "109",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_10_0",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:54.983774"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "118",
+    "citation_text": "118",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_10_4",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:55.153840"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "12",
+    "citation_text": "12",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_2_6",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:55.454209"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "158",
+    "citation_text": "158",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_12_0",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:55.795892"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "167",
+    "citation_text": "167",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_12_10",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:55.963965"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "184",
+    "citation_text": "184",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_13_4",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:56.136289"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "185",
+    "citation_text": "185",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_14_0",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:56.311622"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "187",
+    "citation_text": "187",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_14_4",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:56.526425"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "194",
+    "citation_text": "194",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_14_6",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:56.695910"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "222",
+    "citation_text": "[222]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_16_6",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:57.180333"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "224",
+    "citation_text": "224",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_17_0",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:57.351732"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "241",
+    "citation_text": "241",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_19_14",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:57.440611"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  },
+  {
+    "citation_id": "80",
+    "citation_text": "[80]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_8_1",
+        "claim_type": "quantitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "python_script",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: dataset download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:57.620330"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs"
+  }
+]

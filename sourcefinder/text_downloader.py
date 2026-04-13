@@ -3,8 +3,9 @@
 import logging
 import requests
 from pathlib import Path
-from typing import Dict, Any
-from .config import DOWNLOAD_TIMEOUT, TEXT_OUTPUT_DIR
+from typing import Dict, Any, Optional
+from .config import DOWNLOAD_TIMEOUT, TEXT_OUTPUT_DIR, INSTITUTIONAL_COOKIES
+from .academic_paper_finder import AcademicPaperFinder
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class TextDownloader:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+        self._paper_finder = AcademicPaperFinder()
     
     def download(self, url: str, citation_id: str) -> Dict[str, Any]:
         """
@@ -110,6 +112,56 @@ class TextDownloader:
             logger.error(f"HTML extraction failed: {e}")
             return html_content
     
+    def download_with_resolution(
+        self,
+        citation_details,           # CitationDetails | None
+        citation_id: str,
+        raw_citation_text: str,     # full bibliography entry text
+    ) -> Dict[str, Any]:
+        """
+        Resolve a citation to a URL then download it.
+
+        Resolution order:
+          1. Use citation_details.url directly if already populated
+          2. Use AcademicPaperFinder (Unpaywall → Semantic Scholar → CrossRef)
+          3. Use institutional cookies on the landing page if configured
+        """
+        # 1. Direct URL already known
+        if citation_details and citation_details.url:
+            logger.info(f"Downloading from known URL: {citation_details.url}")
+            return self.download(citation_details.url, citation_id)
+
+        # 2. Try open-access resolution
+        logger.info(f"Resolving citation [{citation_id}]: {raw_citation_text[:80]}...")
+        resolved_url = self._paper_finder.find_url(raw_citation_text)
+        if resolved_url:
+            return self.download(resolved_url, citation_id)
+
+        # 3. Institutional cookie fallback — try CrossRef landing page URL if we have it
+        if INSTITUTIONAL_COOKIES:
+            doi_match = __import__('re').search(
+                r'\b(10\.\d{4,}/\S+?)(?:[,\s\])}]|$)', raw_citation_text
+            )
+            if doi_match:
+                landing = f"https://doi.org/{doi_match.group(1).rstrip('.')}"
+                logger.info(f"Trying institutional cookies on landing page: {landing}")
+                content = self._paper_finder.fetch_with_cookies(landing)
+                if content:
+                    filename = f"citation_{citation_id}_text.html"
+                    local_path = self.output_dir / filename
+                    local_path.write_bytes(content)
+                    text_content = self._extract_html_text(content.decode("utf-8", errors="replace"))
+                    return {
+                        'downloaded': True,
+                        'format': 'html',
+                        'path': str(local_path),
+                        'text_content': text_content,
+                        'error': None,
+                    }
+
+        return {'downloaded': False, 'format': None, 'path': None, 'text_content': None,
+                'error': 'No URL found via open-access APIs or institutional cookies'}
+
     def delete_text(self, filename: str) -> Dict[str, Any]:
         """
         Delete a text file from the text_sources folder.

@@ -1,19 +1,22 @@
 """Dataset Finder - Search for data repositories for quantitative claims"""
 
 import logging
+import requests
 from typing import List, Optional, Dict, Any
 from models import FoundDatasetSource
 from hybrid_citation_scraper.llm_client import LLMClient
+from .config import DATA_GOV_API, KAGGLE_USERNAME, KAGGLE_KEY, DEFAULT_TOP_K, DOWNLOAD_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
 class DatasetFinder:
     """Search for data repositories for quantitative claims with LLM-based reuse logic"""
-    
+
     def __init__(self, llm_client: LLMClient):
         self.llm_client = llm_client
         self.found_datasets: List[FoundDatasetSource] = []
+        self.browser_searcher = None  # injected by orchestrator after startup login
     
     def find_dataset(
         self, 
@@ -111,22 +114,110 @@ Return JSON: {{"can_reuse": true/false, "dataset_index": 1-{len(datasets)} or nu
             return None
     
     def _search_repositories(self, claim_text: str) -> List[Dict[str, Any]]:
-        """Search data repositories (data.gov, Kaggle, etc.)"""
+        """Search data repositories (data.gov, Kaggle, then browser fallbacks) for datasets."""
         candidates = []
-        
-        # Simple placeholder - in production would query actual APIs
-        # For now, return mock results for testing
-        logger.warning("Using mock dataset search - implement actual API integration")
-        
-        # Mock result
-        candidates.append({
-            'url': f'https://data.gov/dataset/mock_{hash(claim_text) % 1000}',
-            'title': f'Mock dataset for: {claim_text[:50]}...',
-            'source': 'data.gov',
-            'description': 'Mock dataset description',
-            'score': 0.8
-        })
-        
+        query = claim_text[:100]
+
+        candidates.extend(self._search_data_gov(query))
+        if KAGGLE_USERNAME and KAGGLE_KEY:
+            candidates.extend(self._search_kaggle(query))
+        else:
+            logger.debug("Kaggle credentials not set; skipping Kaggle search")
+
+        # Browser fallback: Zenodo, Figshare, HuggingFace
+        if not candidates and self.browser_searcher is not None:
+            logger.info("APIs returned no results — falling back to browser search (Zenodo/Figshare/HuggingFace)")
+            candidates.extend(self._search_browser(query))
+
+        if not candidates:
+            logger.warning(f"No dataset candidates found for query: {query[:60]}...")
+        return candidates
+
+    def _search_browser(self, query: str) -> List[Dict[str, Any]]:
+        """Search Zenodo, Figshare, and HuggingFace Datasets via browser."""
+        candidates = []
+        sources = [
+            ("zenodo", self.browser_searcher.search_zenodo),
+            ("figshare", self.browser_searcher.search_figshare),
+            ("huggingface", self.browser_searcher.search_huggingface_datasets),
+        ]
+        for source_name, search_fn in sources:
+            try:
+                urls = search_fn(query, top_k=3)
+                for url in urls:
+                    candidates.append({
+                        "url": url,
+                        "title": f"{source_name} dataset",
+                        "source": source_name,
+                        "description": "",
+                        "score": 0.65,
+                        "query": query,
+                    })
+                if urls:
+                    logger.info(f"  Browser ({source_name}): {len(urls)} candidates")
+            except Exception as e:
+                logger.warning(f"  Browser search failed ({source_name}): {e}")
+        return candidates
+
+    def _search_data_gov(self, query: str) -> List[Dict[str, Any]]:
+        """Search data.gov CKAN API for relevant datasets."""
+        candidates = []
+        try:
+            response = requests.get(
+                DATA_GOV_API,
+                params={"q": query, "rows": DEFAULT_TOP_K},
+                timeout=DOWNLOAD_TIMEOUT,
+            )
+            response.raise_for_status()
+            data = response.json()
+            results = data.get("result", {}).get("results", [])
+            for item in results:
+                # Prefer the first CSV/JSON resource; fall back to the dataset page
+                resource_url = None
+                for res in item.get("resources", []):
+                    fmt = (res.get("format") or "").lower()
+                    if fmt in ("csv", "json", "xlsx", "xls"):
+                        resource_url = res.get("url")
+                        break
+                if not resource_url:
+                    resource_url = f"https://catalog.data.gov/dataset/{item.get('name', '')}"
+
+                candidates.append({
+                    "url": resource_url,
+                    "title": item.get("title", ""),
+                    "source": "data.gov",
+                    "description": (item.get("notes") or "")[:200],
+                    "score": 0.7,
+                    "query": query,
+                })
+            logger.info(f"data.gov returned {len(candidates)} candidates")
+        except Exception as e:
+            logger.warning(f"data.gov search failed: {e}")
+        return candidates
+
+    def _search_kaggle(self, query: str) -> List[Dict[str, Any]]:
+        """Search Kaggle datasets using the kaggle package."""
+        candidates = []
+        try:
+            import kaggle  # noqa: F401 — triggers auth from env vars
+            from kaggle.api.kaggle_api_extended import KaggleApiExtended
+            api = KaggleApiExtended()
+            api.authenticate()
+            results = api.dataset_list(search=query, page_size=DEFAULT_TOP_K)
+            for item in results:
+                ref = getattr(item, "ref", None)
+                if ref:
+                    candidates.append({
+                        "url": f"https://www.kaggle.com/datasets/{ref}",
+                        "title": getattr(item, "title", ref),
+                        "source": "kaggle",
+                        "description": getattr(item, "subtitle", ""),
+                        "score": 0.7,
+                        "query": query,
+                    })
+            logger.info(f"Kaggle returned {len(candidates)} candidates")
+        except Exception as e:
+            logger.warning(f"Kaggle search failed: {e}")
         return candidates
     
     def _rank_candidates(self, claim_text: str, candidates: List[Dict]) -> Optional[Dict]:

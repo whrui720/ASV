@@ -9,9 +9,10 @@ Architecture:
 """
 
 import json
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
+from .config import CLAIM_EXTRACTION_OUTPUT_DIR
 from .utils import (
     extract_text_from_pdf,
     extract_title_and_abstract,
@@ -286,8 +287,21 @@ class HybridClaimExtractor:
         
         return dict(batched)
     
-    def save_results(self, output_path: str):
-        """Save claims to JSON file"""
+    def save_results(self, output_path: Optional[str] = None, pdf_path: Optional[str] = None) -> str:
+        """
+        Save claims to JSON file.
+
+        If output_path is given, saves there. Otherwise saves to
+        CLAIM_EXTRACTION_OUTPUT_DIR/{pdf_stem}_claims.json (requires pdf_path).
+        Returns the resolved path as a string.
+        """
+        if output_path is None:
+            if pdf_path is None:
+                raise ValueError("Either output_path or pdf_path must be provided")
+            out_dir = Path(CLAIM_EXTRACTION_OUTPUT_DIR)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            output_path = str(out_dir / f"{Path(pdf_path).stem}_claims.json")
+
         output_data = {
             "claims": [claim.model_dump() for claim in self.claims],
             "citations": self.citations,
@@ -298,11 +312,12 @@ class HybridClaimExtractor:
                 "claims_with_citations": sum(1 for c in self.claims if c.citation_found),
             }
         }
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
-        
+
         print(f"✓ Results saved to {output_path}")
+        return output_path
     
     @staticmethod
     def _extract_citation_id(citation_marker: str) -> str:
@@ -386,9 +401,8 @@ def main():
     # Process PDF
     claims, citations = extractor.process_pdf(pdf_path)
     
-    # Save results
-    output_path = Path(pdf_path).stem + "_claims.json"
-    extractor.save_results(output_path)
+    # Save results to the dedicated output directory
+    output_path = extractor.save_results(pdf_path=pdf_path)
     
     # Print summary
     print(f"\nSummary:")

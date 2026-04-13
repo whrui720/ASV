@@ -25,3 +25,6 @@ REFERENCE_KEYWORDS = [
 # Chunking Settings
 CHUNK_SIZE = 800  # tokens per chunk
 CHUNK_OVERLAP = 100  # overlap between chunks
+
+# Output directory for extracted claims (relative to project root)
+CLAIM_EXTRACTION_OUTPUT_DIR = "./hybrid_citation_scraper/test_outputs"

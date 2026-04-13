@@ -2,30 +2,50 @@
 
 import logging
 from typing import Optional, Dict, Any
+
 from hybrid_citation_scraper.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
+
 class TextFinder:
-    """Search for text-based sources for qualitative claims"""
-    
-    def __init__(self, llm_client: LLMClient):
+    """Search for text-based sources for qualitative claims via browser (Google Scholar)."""
+
+    def __init__(self, llm_client: LLMClient, browser_searcher=None):
         self.llm_client = llm_client
-    
+        self.browser_searcher = browser_searcher
+
     def find_text_source(self, claim_text: str, claim_id: str) -> Optional[Dict[str, Any]]:
         """
-        Search for text-based sources (Google Scholar, arXiv, etc.)
-        Returns best matching source URL + metadata
+        Search for text-based sources via Google Scholar using the browser searcher.
+        Returns best matching source URL + metadata, or None if nothing found.
         """
-        logger.info(f"Searching for text sources for claim: {claim_id}")
-        
-        # Placeholder - would implement actual search APIs
-        logger.warning("Using mock text source search - implement actual API integration")
-        
-        # Mock result
+        if self.browser_searcher is None:
+            logger.warning(
+                f"[{claim_id}] No browser_searcher available for text source search — "
+                "set TextFinder.browser_searcher before calling find_text_source()"
+            )
+            return None
+
+        logger.info(f"[{claim_id}] Searching Google Scholar via browser: {claim_text[:80]}...")
+        query = claim_text[:200]
+
+        try:
+            urls = self.browser_searcher.search_google_scholar(query, top_k=3)
+        except Exception as e:
+            logger.warning(f"[{claim_id}] Browser search failed: {e}")
+            return None
+
+        if not urls:
+            logger.info(f"[{claim_id}] No text sources found via browser search")
+            return None
+
+        best_url = urls[0]
+        logger.info(f"[{claim_id}] ✓ Text source found: {best_url}")
         return {
-            'url': f'https://arxiv.org/abs/mock_{hash(claim_text) % 10000}',
-            'title': f'Mock paper for: {claim_text[:50]}...',
-            'source': 'arxiv',
-            'relevance_score': 0.75
+            "url": best_url,
+            "title": f"Source for: {claim_text[:60]}...",
+            "source": "google_scholar_browser",
+            "relevance_score": 0.8,
+            "all_candidates": urls,
         }

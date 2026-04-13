@@ -125,11 +125,11 @@ Generate ONLY the Python code, no explanations or markdown formatting.
         """Execute generated script and capture output."""
         try:
             result = subprocess.run(
-                ['python', str(script_path)],
+                ['python', str(script_path.resolve())],
                 capture_output=True,
                 text=True,
                 timeout=30,
-                cwd=script_path.parent
+                cwd=script_path.resolve().parent
             )
             return {
                 'success': result.returncode == 0,

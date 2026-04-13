@@ -1,0 +1,974 @@
+[
+  {
+    "citation_id": "1",
+    "citation_text": "1",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_0_8",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:40.521483"
+      },
+      {
+        "claim_id": "claim_0_9",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:40.521483"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "108",
+    "citation_text": "108",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_9_17",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:40.610523"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "12",
+    "citation_text": "12",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_10_11",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:40.790474"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "13",
+    "citation_text": "13",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_2_8",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:40.965590"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "135",
+    "citation_text": "135",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_11_2",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:41.262908"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "14",
+    "citation_text": "14",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_3_2",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:41.430396"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "146",
+    "citation_text": "146",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_11_11",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:41.608211"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "15",
+    "citation_text": "15",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_3_4",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:41.773871"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "159",
+    "citation_text": "159",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_12_1",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:41.950384"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "160",
+    "citation_text": "160",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_12_2",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.168547"
+      },
+      {
+        "claim_id": "claim_12_3",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.168547"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "166",
+    "citation_text": "166",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_12_6",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.258162"
+      },
+      {
+        "claim_id": "claim_12_8",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.258162"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "18",
+    "citation_text": "18",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_3_7",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.432375"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "19",
+    "citation_text": "19",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_3_9",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.649552"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "195",
+    "citation_text": "195",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_14_10",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.827434"
+      },
+      {
+        "claim_id": "claim_14_12",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:42.827434"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "196",
+    "citation_text": "196",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_14_13",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.003762"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "197",
+    "citation_text": "197",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_14_15",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.088643"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "2",
+    "citation_text": "[2]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_1_1",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.257432"
+      },
+      {
+        "claim_id": "claim_1_3",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.257432"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "20",
+    "citation_text": "20",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_3_10",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.426175"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "205",
+    "citation_text": "[205]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_15_4",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.594433"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "206",
+    "citation_text": "[206]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_15_6",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.768211"
+      },
+      {
+        "claim_id": "claim_15_8",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.768211"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "21",
+    "citation_text": "21",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_4_3",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:43.987116"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "211",
+    "citation_text": "[211]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_15_10",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:44.074277"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "212",
+    "citation_text": "[212]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_15_15",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:44.533964"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "222",
+    "citation_text": "[222]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_16_12",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:44.700856"
+      },
+      {
+        "claim_id": "claim_19_18",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:44.700856"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "223",
+    "citation_text": "[223]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_16_14",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:44.879571"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "234",
+    "citation_text": "234",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_17_7",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:45.352122"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "237",
+    "citation_text": "237",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_17_9",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:45.529088"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "239",
+    "citation_text": "239",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_19_5",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:45.705007"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "240",
+    "citation_text": "240",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_19_6",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:45.796083"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "34",
+    "citation_text": "34",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_4_15",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:45.968451"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "38",
+    "citation_text": "38",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_5_1",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:46.053468"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "50",
+    "citation_text": "50",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_11_10",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:46.147672"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "6",
+    "citation_text": "6",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_2_1",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:46.317310"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "70",
+    "citation_text": "[70]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_7_11",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:46.492493"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "73",
+    "citation_text": "[73]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_7_14",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:46.729319"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "83",
+    "citation_text": "[83]",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_8_7",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:46.904714"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "91",
+    "citation_text": "91",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_9_1",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:47.122484"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  },
+  {
+    "citation_id": "92",
+    "citation_text": "92",
+    "download_successful": false,
+    "source_path": null,
+    "claim_results": [
+      {
+        "claim_id": "claim_9_4",
+        "claim_type": "qualitative",
+        "originally_uncited": false,
+        "validated": false,
+        "validation_method": "rag_search",
+        "confidence": 0.0,
+        "passed": false,
+        "explanation": "Batch failed: text source download unsuccessful",
+        "sources_used": [],
+        "errors": "No URL found via open-access APIs or institutional cookies",
+        "validation_metadata": null,
+        "validated_at": "2026-03-22T16:32:47.214435"
+      }
+    ],
+    "batch_notes": "Download failed: No URL found via open-access APIs or institutional cookies"
+  }
+]
