@@ -1,10 +1,16 @@
 """Dataset Finder - Search for data repositories for quantitative claims"""
 
+import json
 import logging
-import requests
+from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Dict, Any
+
+import requests
+
 from models import FoundDatasetSource
 from hybrid_citation_scraper.llm_client import LLMClient
+from run_paths import RunPaths
 from .config import DATA_GOV_API, KAGGLE_USERNAME, KAGGLE_KEY, DEFAULT_TOP_K, DOWNLOAD_TIMEOUT
 
 logger = logging.getLogger(__name__)
@@ -13,10 +19,26 @@ logger = logging.getLogger(__name__)
 class DatasetFinder:
     """Search for data repositories for quantitative claims with LLM-based reuse logic"""
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMClient, run_paths: Optional[RunPaths] = None):
         self.llm_client = llm_client
         self.found_datasets: List[FoundDatasetSource] = []
         self.browser_searcher = None  # injected by orchestrator after startup login
+        self.run_paths = run_paths
+
+    def save_discovery_records(self) -> Optional[Path]:
+        """Flush in-memory dataset discoveries to the run's sourcefinder folder."""
+        if self.run_paths is None:
+            return None
+        path = self.run_paths.found_datasets_json()
+        payload = {
+            "run_timestamp": datetime.now().isoformat(),
+            "pdf_stem": self.run_paths.pdf_stem,
+            "count": len(self.found_datasets),
+            "datasets": [d.model_dump() for d in self.found_datasets],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        return path
     
     def find_dataset(
         self, 

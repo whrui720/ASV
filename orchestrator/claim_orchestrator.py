@@ -10,6 +10,7 @@ from collections import defaultdict
 
 from models import ClaimObject, ValidationResult, ValidationBatch, CitationDetails
 from hybrid_citation_scraper.llm_client import LLMClient
+from run_paths import RunPaths
 from sourcefinder import DatasetFinder, TextFinder, DatasetDownloader, TextDownloader
 from sourcefinder.browser_searcher import BrowserSearcher
 from sourcefinder.config import KNOWN_PAYWALL_DOMAINS
@@ -17,19 +18,14 @@ from validator.truth_table_checker import TruthTableChecker
 from validator.llm_verifier import LLMVerifier
 from .process_quantitative import ProcessQuantitative
 from .process_qualitative import ProcessQualitative
-from validator.config import VALIDATION_OUTPUT_DIR
-
-LOGS_DIR = Path("./logs")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def _setup_file_logging(logs_dir: Path) -> Path:
-    """Add a timestamped file handler to the root logger. Returns the log file path."""
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = logs_dir / f"{timestamp}_orchestration.log"
+def _setup_file_logging(log_path: Path) -> Path:
+    """Add a file handler writing to ``log_path`` to the root logger."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
@@ -42,12 +38,13 @@ def _setup_file_logging(logs_dir: Path) -> Path:
 class ClaimOrchestrator:
     """Main orchestrator for claim validation"""
 
-    def __init__(self, output_dir: str = VALIDATION_OUTPUT_DIR, logs_dir: str = str(LOGS_DIR)):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, run_paths: RunPaths):
+        self.run_paths = run_paths
+        self.output_dir = run_paths.validation_results
 
-        self._log_path = _setup_file_logging(Path(logs_dir))
-        logger.info(f"Orchestrator initialised. Log file: {self._log_path}")
+        self._log_path = _setup_file_logging(run_paths.orchestration_log())
+        logger.info(f"Orchestrator initialised. Run folder: {run_paths.root}")
+        logger.info(f"Log file: {self._log_path}")
 
         # Initialize LLM client
         self.llm_client = LLMClient()
@@ -57,14 +54,14 @@ class ClaimOrchestrator:
         self.llm_verifier = LLMVerifier(self.llm_client)
 
         # Initialize process orchestrators
-        self.quant_processor = ProcessQuantitative(self.llm_client)
+        self.quant_processor = ProcessQuantitative(self.llm_client, run_paths=run_paths)
         self.qual_processor = ProcessQualitative(self.llm_client)
 
         # Initialize sourcefinder tools
-        self.dataset_finder = DatasetFinder(llm_client=self.llm_client)
-        self.text_finder = TextFinder(llm_client=self.llm_client)
-        self.dataset_downloader = DatasetDownloader()
-        self.text_downloader = TextDownloader()
+        self.dataset_finder = DatasetFinder(llm_client=self.llm_client, run_paths=run_paths)
+        self.text_finder = TextFinder(llm_client=self.llm_client, run_paths=run_paths)
+        self.dataset_downloader = DatasetDownloader(run_paths=run_paths)
+        self.text_downloader = TextDownloader(run_paths=run_paths)
 
         # Citations dict populated when claims are loaded from JSON
         self.citations_dict: Dict[str, str] = {}
@@ -136,6 +133,14 @@ class ClaimOrchestrator:
         # Save results and summary
         self._save_results(results)
         self._save_run_summary(claims, results, step_timings, run_start)
+
+        # Persist sourcefinder discovery records (in-memory across run)
+        dataset_records_path = self.dataset_finder.save_discovery_records()
+        if dataset_records_path is not None:
+            logger.info(f"✓ Dataset discovery records saved to: {dataset_records_path}")
+        text_records_path = self.text_finder.save_discovery_records()
+        if text_records_path is not None:
+            logger.info(f"✓ Text source discovery records saved to: {text_records_path}")
 
         # Clean up browser if it was started
         if self.browser_searcher is not None:
@@ -338,7 +343,7 @@ class ClaimOrchestrator:
                 claim_results.append(result)
                 logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
 
-            delete_result = self.dataset_downloader.delete_dataset(download_result['path'].split('/')[-1])
+            delete_result = self.dataset_downloader.delete_dataset(Path(download_result['path']).name)
             if delete_result['deleted']:
                 logger.info(f"    ✓ Deleted dataset to conserve memory: {download_result['path']}")
             else:
@@ -414,7 +419,7 @@ class ClaimOrchestrator:
                 claim_results.append(result)
                 logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
 
-            delete_result = self.text_downloader.delete_text(download_result['path'].split('/')[-1])
+            delete_result = self.text_downloader.delete_text(Path(download_result['path']).name)
             if delete_result['deleted']:
                 logger.info(f"    ✓ Deleted text file to conserve memory: {download_result['path']}")
             else:
@@ -486,7 +491,7 @@ class ClaimOrchestrator:
             },
         }
 
-        summary_path = self.output_dir / "run_summary.json"
+        summary_path = self.run_paths.run_summary_json()
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
         logger.info(f"✓ Run summary saved to: {summary_path}")

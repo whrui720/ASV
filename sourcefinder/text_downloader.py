@@ -6,16 +6,27 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from .config import DOWNLOAD_TIMEOUT, TEXT_OUTPUT_DIR, INSTITUTIONAL_COOKIES
 from .academic_paper_finder import AcademicPaperFinder
+from run_paths import RunPaths
 
 logger = logging.getLogger(__name__)
 
 
 class TextDownloader:
     """Download text sources (PDF, HTML, plain text)"""
-    
-    def __init__(self, output_dir: str = TEXT_OUTPUT_DIR):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def __init__(
+        self,
+        run_paths: Optional[RunPaths] = None,
+        output_dir: Optional[str] = None,
+    ):
+        if run_paths is not None:
+            self.output_dir = run_paths.text_sources
+        elif output_dir is not None:
+            self.output_dir = Path(output_dir)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.output_dir = Path(TEXT_OUTPUT_DIR)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'

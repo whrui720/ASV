@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 from hybrid_citation_scraper.llm_client import LLMClient
+from run_paths import RunPaths
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -13,10 +14,13 @@ logger = logging.getLogger(__name__)
 class PythonScriptValidator:
     """Validation tool that generates and executes scripts for quantitative checks"""
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMClient, run_paths: Optional[RunPaths] = None):
         self.llm_client = llm_client
-        self.script_dir = Path("generated_scripts")
-        self.script_dir.mkdir(exist_ok=True)
+        if run_paths is not None:
+            self.script_dir = run_paths.generated_scripts
+        else:
+            self.script_dir = Path("generated_scripts")
+            self.script_dir.mkdir(exist_ok=True)
 
     def validate(self, claim_text: str, dataset_path: str, claim_id: str) -> Dict[str, Any]:
         """

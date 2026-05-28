@@ -5,18 +5,29 @@ import requests
 import pandas as pd
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from .config import DOWNLOAD_TIMEOUT, DATASET_OUTPUT_DIR
+from run_paths import RunPaths
 
 logger = logging.getLogger(__name__)
 
 
 class DatasetDownloader:
     """Download datasets (CSV, JSON, Excel)"""
-    
-    def __init__(self, output_dir: str = DATASET_OUTPUT_DIR):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def __init__(
+        self,
+        run_paths: Optional[RunPaths] = None,
+        output_dir: Optional[str] = None,
+    ):
+        if run_paths is not None:
+            self.output_dir = run_paths.datasets
+        elif output_dir is not None:
+            self.output_dir = Path(output_dir)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.output_dir = Path(DATASET_OUTPUT_DIR)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'

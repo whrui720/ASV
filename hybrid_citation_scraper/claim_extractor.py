@@ -9,9 +9,17 @@ Architecture:
 """
 
 import json
+import sys
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
+# Ensure project root is on sys.path so ``run_paths`` resolves when the module
+# is launched as ``python -m hybrid_citation_scraper.claim_extractor``.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from run_paths import RunPaths
 from .config import CLAIM_EXTRACTION_OUTPUT_DIR
 from .utils import (
     extract_text_from_pdf,
@@ -287,20 +295,34 @@ class HybridClaimExtractor:
         
         return dict(batched)
     
-    def save_results(self, output_path: Optional[str] = None, pdf_path: Optional[str] = None) -> str:
+    def save_results(
+        self,
+        output_path: Optional[str] = None,
+        pdf_path: Optional[str] = None,
+        run_paths: Optional[RunPaths] = None,
+    ) -> str:
         """
         Save claims to JSON file.
 
-        If output_path is given, saves there. Otherwise saves to
-        CLAIM_EXTRACTION_OUTPUT_DIR/{pdf_stem}_claims.json (requires pdf_path).
+        Precedence:
+        1. ``output_path`` — explicit override
+        2. ``run_paths`` — write to ``run_paths.claims_json()``
+        3. legacy ``CLAIM_EXTRACTION_OUTPUT_DIR/{pdf_stem}_claims.json``
+           (requires ``pdf_path``)
+
         Returns the resolved path as a string.
         """
         if output_path is None:
-            if pdf_path is None:
-                raise ValueError("Either output_path or pdf_path must be provided")
-            out_dir = Path(CLAIM_EXTRACTION_OUTPUT_DIR)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            output_path = str(out_dir / f"{Path(pdf_path).stem}_claims.json")
+            if run_paths is not None:
+                output_path = str(run_paths.claims_json())
+            else:
+                if pdf_path is None:
+                    raise ValueError(
+                        "One of output_path, run_paths, or pdf_path must be provided"
+                    )
+                out_dir = Path(CLAIM_EXTRACTION_OUTPUT_DIR)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                output_path = str(out_dir / f"{Path(pdf_path).stem}_claims.json")
 
         output_data = {
             "claims": [claim.model_dump() for claim in self.claims],
@@ -383,26 +405,31 @@ class HybridClaimExtractor:
 
 def main():
     """Example usage"""
-    import sys
-    
     if len(sys.argv) < 2:
-        print("Usage: python -m hybrid_citation_scraper.claim_extractor <pdf_path>")
+        print(
+            "Usage: python -m hybrid_citation_scraper.claim_extractor "
+            "<pdf_path> [run_dir]"
+        )
         sys.exit(1)
-    
+
     pdf_path = sys.argv[1]
-    
+    run_dir = sys.argv[2] if len(sys.argv) >= 3 else None
+
     if not Path(pdf_path).exists():
         print(f"Error: File not found: {pdf_path}")
         sys.exit(1)
-    
+
+    run_paths = RunPaths.from_existing(run_dir) if run_dir else None
+
     # Create extractor
     extractor = HybridClaimExtractor()
-    
+
     # Process PDF
     claims, citations = extractor.process_pdf(pdf_path)
-    
-    # Save results to the dedicated output directory
-    output_path = extractor.save_results(pdf_path=pdf_path)
+
+    # Save results — to the per-run citations/ folder if a run dir was given,
+    # otherwise to the legacy CLAIM_EXTRACTION_OUTPUT_DIR.
+    output_path = extractor.save_results(pdf_path=pdf_path, run_paths=run_paths)
     
     # Print summary
     print(f"\nSummary:")

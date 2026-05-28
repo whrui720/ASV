@@ -1,9 +1,13 @@
 """Text Finder - Search for text sources for qualitative claims"""
 
+import json
 import logging
-from typing import Optional, Dict, Any
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from hybrid_citation_scraper.llm_client import LLMClient
+from run_paths import RunPaths
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +15,16 @@ logger = logging.getLogger(__name__)
 class TextFinder:
     """Search for text-based sources for qualitative claims via browser (Google Scholar)."""
 
-    def __init__(self, llm_client: LLMClient, browser_searcher=None):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        browser_searcher=None,
+        run_paths: Optional[RunPaths] = None,
+    ):
         self.llm_client = llm_client
         self.browser_searcher = browser_searcher
+        self.run_paths = run_paths
+        self.found_text_sources: List[Dict[str, Any]] = []
 
     def find_text_source(self, claim_text: str, claim_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -42,10 +53,28 @@ class TextFinder:
 
         best_url = urls[0]
         logger.info(f"[{claim_id}] ✓ Text source found: {best_url}")
-        return {
+        result = {
             "url": best_url,
             "title": f"Source for: {claim_text[:60]}...",
             "source": "google_scholar_browser",
             "relevance_score": 0.8,
+            "found_by_claim_id": claim_id,
             "all_candidates": urls,
         }
+        self.found_text_sources.append(result)
+        return result
+
+    def save_discovery_records(self) -> Optional[Path]:
+        """Flush in-memory text-source discoveries to the run's sourcefinder folder."""
+        if self.run_paths is None:
+            return None
+        path = self.run_paths.found_text_sources_json()
+        payload = {
+            "run_timestamp": datetime.now().isoformat(),
+            "pdf_stem": self.run_paths.pdf_stem,
+            "count": len(self.found_text_sources),
+            "text_sources": self.found_text_sources,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        return path

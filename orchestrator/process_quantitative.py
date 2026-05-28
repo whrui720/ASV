@@ -1,8 +1,11 @@
 """Process Quantitative - Orchestration logic for quantitative claim processing"""
 
 import logging
+from typing import Optional
+
 from hybrid_citation_scraper.llm_client import LLMClient
 from models import ClaimObject, ValidationResult
+from run_paths import RunPaths
 from validator.python_script_validator import PythonScriptValidator
 
 logging.basicConfig(level=logging.INFO)
@@ -12,8 +15,8 @@ logger = logging.getLogger(__name__)
 class ProcessQuantitative:
     """Orchestrate quantitative claim processing using validator tools"""
 
-    def __init__(self, llm_client: LLMClient):
-        self.script_tool = PythonScriptValidator(llm_client)
+    def __init__(self, llm_client: LLMClient, run_paths: Optional[RunPaths] = None):
+        self.script_tool = PythonScriptValidator(llm_client, run_paths=run_paths)
 
     def validate_claim(self, claim: ClaimObject, dataset_path: str) -> ValidationResult:
         """Process a quantitative claim using the Python script validation tool."""
