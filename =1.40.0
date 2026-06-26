@@ -1,0 +1,15 @@
+Collecting playwright
+  Downloading playwright-1.60.0-py3-none-win_amd64.whl.metadata (3.5 kB)
+Collecting pyee<14,>=13 (from playwright)
+  Downloading pyee-13.0.1-py3-none-any.whl.metadata (3.0 kB)
+Requirement already satisfied: greenlet<4.0.0,>=3.1.1 in c:\users\hrwan\asv\.venv\lib\site-packages (from playwright) (3.3.0)
+Requirement already satisfied: typing-extensions in c:\users\hrwan\asv\.venv\lib\site-packages (from pyee<14,>=13->playwright) (4.15.0)
+Downloading playwright-1.60.0-py3-none-win_amd64.whl (37.9 MB)
+   ---------------------------------------- 37.9/37.9 MB 26.5 MB/s  0:00:01
+Downloading pyee-13.0.1-py3-none-any.whl (15 kB)
+Installing collected packages: pyee, playwright
+
+Successfully installed playwright-1.60.0 pyee-13.0.1
+
+[notice] A new release of pip is available: 25.3 -> 26.1.2
+[notice] To update, run: python.exe -m pip install --upgrade pip

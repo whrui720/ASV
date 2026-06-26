@@ -18,7 +18,7 @@ Comprehensive test suite for the `hybrid_citation_scraper` module, covering all 
    - Citation marker extraction
 
 2. **test_llm_client.py** - Tests for LLM client
-   - Claim extraction from chunks (with mocked OpenAI calls)
+   - Claim extraction from chunks (with mocked Gemini calls)
    - Reference parsing with LLM
    - Generic LLM calls
    - Cost tracking and calculation
@@ -112,7 +112,7 @@ Common fixtures are defined in `conftest.py`:
 - `sample_references_section` - Sample reference section
 - `sample_citations_dict` - Parsed citations
 - `sample_claims_data` - Sample claim data
-- `mock_openai_client` - Mocked OpenAI client
+- `mock_llm_client` - Mocked Gemini-backed LLM client
 - `mock_llm_response` - Mocked LLM response builder
 - `sample_claim_objects` - Sample ClaimObject instances
 - `temp_pdf_file` - Temporary PDF file path
@@ -120,8 +120,8 @@ Common fixtures are defined in `conftest.py`:
 
 ## Mocking Strategy
 
-### OpenAI API Calls
-All OpenAI API calls are mocked using `unittest.mock.patch` to:
+### Gemini API Calls
+All Gemini API calls are mocked using `unittest.mock.patch` to:
 - Avoid actual API calls during tests
 - Control response data for deterministic testing
 - Test error handling without making failed API calls

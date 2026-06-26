@@ -128,7 +128,7 @@ PDF Input
     ├→ Cited Quantitative → Batch Download → Python Scripts → ValidationBatch[]
     └→ Cited Qualitative → Batch Download → RAG + LLM → ValidationBatch[]
     ↓
-JSON Output Files:
+JSON Output Files (under runs/{pdf_stem}__{timestamp}/validation_results/):
 - qualitative_uncited_results.json
 - quantitative_uncited_results.json
 - quantitative_cited_results.json
@@ -183,25 +183,34 @@ JSON Output Files:
 
 ## Usage
 
-### Complete Pipeline
+### Canonical entry point (recommended)
+
+```bash
+python scripts/run_pipeline.py pdfs/research_paper.pdf
+```
+
+This creates a fresh run folder at `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/` and writes every artifact under it (claims JSON, source discovery records, generated scripts, downloads, validation results, run summary, log).
+
+### Programmatic usage
 
 ```python
 from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-from orchestrator import ClaimValidator
+from orchestrator import ClaimOrchestrator
+from run_paths import RunPaths
+
+# Set up the run folder
+run_paths = RunPaths.for_pdf("pdfs/research_paper.pdf")
 
 # Stage 1: Extract claims
 extractor = HybridClaimExtractor()
-claims = extractor.process_pdf("research_paper.pdf")
+claims, citations = extractor.process_pdf("pdfs/research_paper.pdf")
+extractor.save_results(pdf_path="pdfs/research_paper.pdf", run_paths=run_paths)
 
 # Stage 2: Validate claims
-validator = ClaimValidator(output_dir="validation_results")
-results = validator.process_claims(claims)
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
+results = orchestrator.process_claims(claims, citations)
 
-# Results saved to:
-# - validation_results/qualitative_uncited_results.json
-# - validation_results/quantitative_uncited_results.json
-# - validation_results/quantitative_cited_results.json
-# - validation_results/qualitative_cited_results.json
+# Results saved under run_paths.validation_results, run_paths.run_summary_json(), etc.
 ```
 
 ### Access Results
@@ -237,10 +246,25 @@ ASV/
 │       ├── TESTING_GUIDE.md
 │       └── TEST_SUITE_SUMMARY.md
 │
-├── scripts/                       # Utility scripts
+├── scripts/                       # Entry points + utility scripts
 │   ├── README.md
+│   ├── run_pipeline.py            # ← canonical end-to-end entry point
+│   ├── run_orchestrator.py        # ← rerun orchestration on a claims JSON
 │   ├── run_tests.py
 │   └── run_tests.ps1
+│
+├── pdfs/                          # Input PDFs (gitignored)
+│
+├── runs/                          # Per-PDF output folders (gitignored)
+│   └── {pdf_stem}__{YYYYMMDD_HHMMSS}/
+│       ├── citations/             # {pdf_stem}_claims.json
+│       ├── sourcefinder/          # found_datasets.json + found_text_sources.json
+│       ├── generated_scripts/     # validate_{claim_id}.py
+│       ├── datasets/              # citation_{id}_dataset.{csv|json|xlsx}
+│       ├── text_sources/          # citation_{id}_text.{pdf|html|txt}
+│       ├── validation_results/    # 4 result JSONs
+│       ├── final_output/          # run_summary.json
+│       └── logs/                  # orchestration.log
 │
 ├── hybrid_citation_scraper/       # Stage 1: Claim extraction
 │   ├── claim_extractor.py
@@ -258,6 +282,7 @@ ASV/
 ├── validator/                     # Validation tools
 │   ├── truth_table_checker.py
 │   ├── llm_verifier.py
+│   ├── python_script_validator.py
 │   ├── config.py
 │   ├── __init__.py
 │   └── README.md
@@ -270,7 +295,9 @@ ASV/
 │   ├── config.py
 │   └── README.md
 │
+├── run_paths.py                   # RunPaths dataclass — owns per-PDF layout
 ├── models.py                      # Pydantic data models
+├── llm_config.py                  # Gemini API + task routing table
 ├── requirements.txt
 └── README.md
 ```
@@ -299,12 +326,16 @@ openpyxl>=3.1.0
 
 ```bash
 # .env file
-GEMINI_API_KEY=your_gemini_key_here
-GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
+GEMINI_API_KEY=your_gemini_key_here              # Required
+GOOGLE_FACT_CHECK_API_KEY=your_google_key_here   # Optional, truth table check
+KAGGLE_USERNAME=...                              # Optional, dataset search
+KAGGLE_KEY=...
+UNPAYWALL_EMAIL=...                              # Optional, open-access PDF lookup
+SEMANTIC_SCHOLAR_API_KEY=...                     # Optional
 
 # Optional model tier overrides (task routing table uses these)
-LLM_MODEL_SMALL=gemini-2.0-flash-lite
-LLM_MODEL_MEDIUM=gemini-2.0-flash
+LLM_MODEL_SMALL=gemini-2.5-flash-lite
+LLM_MODEL_MEDIUM=gemini-2.5-flash
 LLM_MODEL_STRONG=gemini-2.5-pro
 ```
 

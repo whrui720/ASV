@@ -23,26 +23,31 @@ pip install -r requirements.txt
 
 ```python
 from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
+from run_paths import RunPaths
+
+run_paths = RunPaths.for_pdf("pdfs/research_paper.pdf")
 
 # Initialize
 extractor = HybridClaimExtractor()
 
-# Extract claims from PDF (returns sorted list of ClaimObject)
-claims = extractor.process_pdf("research_paper.pdf")
+# Extract claims from PDF (returns (claims, citations))
+claims, citations = extractor.process_pdf("pdfs/research_paper.pdf")
 
-# Save to JSON
-extractor.save_results("output.json")
+# Save to the run folder's citations/ subdirectory
+extractor.save_results(pdf_path="pdfs/research_paper.pdf", run_paths=run_paths)
 
 # Check API costs
 cost = extractor.llm_client.get_cost_summary()
 print(f"Cost: ${cost['total_cost']:.4f}")
 ```
 
+`save_results` accepts an explicit `output_path` override (highest precedence), a `run_paths` arg (writes to `run_paths.claims_json()`), or falls back to the legacy `hybrid_citation_scraper/test_outputs/` directory when neither is supplied.
+
 ### Simple Example
 
 ```python
 extractor = HybridClaimExtractor()
-claims = extractor.process_pdf("paper.pdf")
+claims, citations = extractor.process_pdf("pdfs/paper.pdf")
 
 # Print all claims
 for claim in claims:
@@ -244,18 +249,27 @@ Stage 2: orchestrator (orchestrates validation)
 Stage 3: Results: JSON files with validation outcomes
 ```
 
-To run the complete pipeline:
+To run the complete pipeline (recommended):
+```bash
+python scripts/run_pipeline.py pdfs/paper.pdf
+```
+
+Or programmatically:
 ```python
-from hybrid_citation_scraper import HybridClaimExtractor
-from orchestrator import ClaimValidator
+from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
+from orchestrator import ClaimOrchestrator
+from run_paths import RunPaths
+
+run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
 
 # Extract claims
 extractor = HybridClaimExtractor()
-claims = extractor.process_pdf("paper.pdf")
+claims, citations = extractor.process_pdf("pdfs/paper.pdf")
+extractor.save_results(pdf_path="pdfs/paper.pdf", run_paths=run_paths)
 
 # Validate claims (see orchestrator module)
-validator = ClaimValidator()
-results = validator.process_claims(claims)
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
+results = orchestrator.process_claims(claims, citations)
 ```
 
 See [main README](../README.md) for complete pipeline documentation.

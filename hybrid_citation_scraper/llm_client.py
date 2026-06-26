@@ -1,6 +1,8 @@
 """LLM client for Gemini model interactions"""
 
 import json
+import random
+import time
 from typing import List, Dict, Any, Optional
 import google.genai as genai
 import google.genai.types as types
@@ -13,6 +15,25 @@ from llm_config import (
     LLM_TASK_CONFIG,
 )
 from models import ClaimObject, LocationInText
+
+# Retry policy for transient Gemini errors (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED, etc.).
+# Backoff is exponential with jitter — delays are roughly 2s, 4s before the final attempt.
+_LLM_MAX_ATTEMPTS = 3
+_LLM_BASE_BACKOFF_SECONDS = 2.0
+_LLM_RETRYABLE_HTTP_CODES = {"429", "500", "502", "503", "504"}
+_LLM_RETRYABLE_KEYWORDS = ("UNAVAILABLE", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED")
+
+
+def _is_transient_llm_error(exc: Exception) -> bool:
+    """True if exc represents a transient Gemini failure worth retrying."""
+    msg = str(exc)
+    if not msg:
+        return False
+    # google-genai prefixes the message with the HTTP code (e.g. "503 UNAVAILABLE. ...").
+    leading_token = msg.split(None, 1)[0]
+    if leading_token in _LLM_RETRYABLE_HTTP_CODES:
+        return True
+    return any(kw in msg for kw in _LLM_RETRYABLE_KEYWORDS)
 
 class LLMClient:
     """Client for interacting with Gemini API"""
@@ -51,11 +72,25 @@ class LLMClient:
             system_instruction=system_message,
         )
 
-        response = self.client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=generation_config,
-        )
+        response = None
+        for attempt in range(1, _LLM_MAX_ATTEMPTS + 1):
+            try:
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=generation_config,
+                )
+                break
+            except Exception as exc:
+                is_last_attempt = attempt == _LLM_MAX_ATTEMPTS
+                if is_last_attempt or not _is_transient_llm_error(exc):
+                    raise
+                delay = _LLM_BASE_BACKOFF_SECONDS * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+                print(
+                    f"  Transient LLM error (attempt {attempt}/{_LLM_MAX_ATTEMPTS}, "
+                    f"model={model_name}): {exc}. Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
 
         usage = getattr(response, "usage_metadata", None)
         if ENABLE_COST_TRACKING and usage:

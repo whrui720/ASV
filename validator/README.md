@@ -77,7 +77,7 @@ Moved to `orchestrator/`:
     "citation_id": "paper123_ref_5",
     "citation_text": "[5] Smith et al., 2023",
     "download_successful": true,
-    "source_path": "/downloads/smith2023_dataset.csv",
+    "source_path": "runs/paper123__20260101_120000/datasets/citation_paper123_ref_5_dataset.csv",
     "claim_results": [
         {...},  # List of ValidationResult
         {...}
@@ -88,10 +88,10 @@ Moved to `orchestrator/`:
 
 ## Output Files
 
-Results are saved to separate JSON files by claim type:
+Results are saved to `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/validation_results/` as separate JSON files by claim type:
 
 - `qualitative_uncited_results.json`: List of ValidationResult
-- `quantitative_uncited_results.json`: List of ValidationResult  
+- `quantitative_uncited_results.json`: List of ValidationResult
 - `quantitative_cited_results.json`: List of ValidationBatch
 - `qualitative_cited_results.json`: List of ValidationBatch
 
@@ -118,24 +118,27 @@ GOOGLE_FACT_CHECK_API_KEY = os.getenv('GOOGLE_FACT_CHECK_API_KEY')
 ## Usage
 
 ```python
-from orchestrator import ClaimValidator
+from orchestrator import ClaimOrchestrator
+from run_paths import RunPaths
 from models import ClaimObject
 
-# Initialize orchestrator
-validator = ClaimValidator(output_dir="validation_results")
+# Initialize the per-PDF run folder + orchestrator
+run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
 
 # Load claims from claim_extractor
 claims = [...]  # List of ClaimObject
+citations = {...}  # Dict[str, str]
 
-# Process all claims
-results = validator.process_claims(claims)
+# Process all claims (writes results under run_paths.validation_results)
+results = orchestrator.process_claims(claims, citations)
 ```
 
 ## Dependencies
 
 Required packages:
 ```
-openai
+google-generativeai
 scikit-learn
 numpy
 pandas
@@ -163,19 +166,23 @@ requests
 
 ### From hybrid_citation_scraper:
 ```python
-from hybrid_citation_scraper import ClaimExtractor
+from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
+from orchestrator import ClaimOrchestrator
+from run_paths import RunPaths
+
+run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
 
 # Extract claims
-extractor = ClaimExtractor(api_key="...")
-claims = extractor.process_pdf("paper.pdf")
+extractor = HybridClaimExtractor()
+claims, citations = extractor.process_pdf("pdfs/paper.pdf")
+extractor.save_results(pdf_path="pdfs/paper.pdf", run_paths=run_paths)
 
 # Pass to orchestrator
-from orchestrator import ClaimValidator
-validator = ClaimValidator()
-results = validator.process_claims(claims)
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
+results = orchestrator.process_claims(claims, citations)
 ```
 
-### Using sourcefinder_tools:
+### Using sourcefinder:
 The orchestrator automatically uses sourcefinder utilities:
 - `DatasetFinder`: Search for datasets, check reuse
 - `TextFinder`: Search for text sources

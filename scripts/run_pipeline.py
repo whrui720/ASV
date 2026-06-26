@@ -11,6 +11,12 @@ Usage:
 import sys
 from pathlib import Path
 
+# Make stdout/stderr UTF-8 so unicode log prints (✓, ✗, →, etc.) don't crash on Windows cp1252.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Ensure project root is on the path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

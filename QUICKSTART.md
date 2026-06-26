@@ -17,69 +17,59 @@ GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
 
 ## Basic Usage
 
-### Complete Pipeline (Extract + Validate)
+### Complete Pipeline (Extract + Validate) — recommended
+
+```bash
+python scripts/run_pipeline.py pdfs/research_paper.pdf
+```
+
+This creates a fresh `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/` folder and writes every artifact (claims, sources, scripts, results, run summary, log) under it.
+
+### Programmatic usage
 
 ```python
 from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-from orchestrator import ClaimValidator
+from orchestrator import ClaimOrchestrator
+from run_paths import RunPaths
+
+run_paths = RunPaths.for_pdf("pdfs/research_paper.pdf")
 
 # Step 1: Extract claims from PDF
 extractor = HybridClaimExtractor()
-claims = extractor.process_pdf("research_paper.pdf")
-
+claims, citations = extractor.process_pdf("pdfs/research_paper.pdf")
+extractor.save_results(pdf_path="pdfs/research_paper.pdf", run_paths=run_paths)
 print(f"Extracted {len(claims)} claims")
 
 # Step 2: Validate all claims
-validator = ClaimValidator(output_dir="validation_results")
-results = validator.process_claims(claims)
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
+results = orchestrator.process_claims(claims, citations)
 
 print("Validation complete!")
-print(f"Results saved to validation_results/")
-```
-
-### Extract Claims Only
-
-```python
-from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-
-extractor = HybridClaimExtractor()
-claims = extractor.process_pdf("paper.pdf")
-
-# Access claims
-for claim in claims:
-    print(f"\nClaim: {claim.text}")
-    print(f"Type: {claim.claim_type}")
-    print(f"Citation: {claim.citation_text}")
-    print(f"Original: {claim.is_original}")
-
-# Save claims to JSON
-extractor.save_results("extracted_claims.json")
-
-# Check API costs
-cost_info = extractor.llm_client.get_cost_summary()
-print(f"\nTotal cost: ${cost_info['total_cost']:.4f}")
+print(f"Results saved under {run_paths.root}")
 ```
 
 ### Validate Pre-Extracted Claims
 
+```bash
+# Reattach to an existing run folder (or synthesize one if needed)
+python scripts/run_orchestrator.py runs/research_paper__20260101_120000/citations/research_paper_claims.json
+```
+
+Programmatic equivalent:
+
 ```python
-import json
-from models import ClaimObject
-from orchestrator import ClaimValidator
+from orchestrator import ClaimOrchestrator
+from run_paths import RunPaths
 
-# Load claims from JSON
-with open("extracted_claims.json", "r") as f:
-    data = json.load(f)
-    claims = [ClaimObject(**claim) for claim in data["claims"]]
-
-# Validate
-validator = ClaimValidator()
-results = validator.process_claims(claims)
+run_paths = RunPaths.from_existing("runs/research_paper__20260101_120000")
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
+claims, citations = ClaimOrchestrator.load_claims_from_json(str(run_paths.claims_json()))
+results = orchestrator.process_claims(claims, citations)
 ```
 
 ## Output Files
 
-After validation, you'll find 4 JSON files in the output directory:
+After validation, the run folder `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/` contains 4 JSON files under `validation_results/`:
 
 ### 1. qualitative_uncited_results.json
 ```json
@@ -109,7 +99,7 @@ Similar structure to qualitative_uncited_results.json
     "citation_id": "paper123_ref_5",
     "citation_text": "[5] Smith et al., 2023",
     "download_successful": true,
-    "source_path": "/downloads/datasets/paper123_ref_5.csv",
+    "source_path": "runs/paper123__20260101_120000/datasets/citation_paper123_ref_5_dataset.csv",
     "claim_results": [
       {
         "claim_id": "claim_3_1",
@@ -120,7 +110,7 @@ Similar structure to qualitative_uncited_results.json
         "confidence": 0.95,
         "passed": true,
         "explanation": "Dataset confirms accuracy improvement of 15.3%",
-        "sources_used": ["/downloads/datasets/paper123_ref_5.csv"],
+        "sources_used": ["runs/paper123__20260101_120000/datasets/citation_paper123_ref_5_dataset.csv"],
         "errors": null
       }
     ],
@@ -136,7 +126,7 @@ Similar batch structure to quantitative_cited_results.json
 
 ```python
 # After validation
-results = validator.process_claims(claims)
+results = orchestrator.process_claims(claims, citations)
 
 # Qualitative uncited (List of ValidationResult)
 for result in results["qualitative_uncited"]:
@@ -148,7 +138,7 @@ for result in results["qualitative_uncited"]:
 for batch in results["quantitative_cited"]:
     print(f"\nCitation: {batch.citation_id}")
     print(f"Download: {'SUCCESS' if batch.download_successful else 'FAILED'}")
-    
+
     for claim_result in batch.claim_results:
         status = 'PASSED' if claim_result.passed else 'FAILED'
         print(f"  Claim {claim_result.claim_id}: {status}")
@@ -214,7 +204,7 @@ Process claims in smaller batches:
 ```python
 # Process first 50 claims
 subset = claims[:50]
-results = validator.process_claims(subset)
+results = orchestrator.process_claims(subset, citations)
 ```
 
 ## Examples
@@ -222,14 +212,18 @@ results = validator.process_claims(subset)
 ### Example 1: Process Single Paper
 ```python
 from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-from orchestrator import ClaimValidator
+from orchestrator import ClaimOrchestrator
+from run_paths import RunPaths
+
+run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
 
 # Extract and validate
 extractor = HybridClaimExtractor()
-claims = extractor.process_pdf("paper.pdf")
+claims, citations = extractor.process_pdf("pdfs/paper.pdf")
+extractor.save_results(pdf_path="pdfs/paper.pdf", run_paths=run_paths)
 
-validator = ClaimValidator()
-results = validator.process_claims(claims)
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
+results = orchestrator.process_claims(claims, citations)
 
 # Count passed/failed
 passed = sum(1 for r in results["qualitative_uncited"] if r.passed)
@@ -239,15 +233,18 @@ print(f"Qualitative uncited: {passed}/{total} passed")
 
 ### Example 2: Filter Only Quantitative Claims
 ```python
+from run_paths import RunPaths
+
+run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
 extractor = HybridClaimExtractor()
-all_claims = extractor.process_pdf("paper.pdf")
+all_claims, citations = extractor.process_pdf("pdfs/paper.pdf")
 
 # Filter quantitative only
 quant_claims = [c for c in all_claims if c.claim_type == "quantitative"]
 
 # Validate
-validator = ClaimValidator()
-results = validator.process_claims(quant_claims)
+orchestrator = ClaimOrchestrator(run_paths=run_paths)
+results = orchestrator.process_claims(quant_claims, citations)
 ```
 
 ### Example 3: Custom Validation Pipeline
@@ -293,6 +290,6 @@ for claim in claims:
 
 See module-specific documentation:
 - [Claim Extraction](hybrid_citation_scraper/README.md)
+- [Orchestrator](orchestrator/README.md)
 - [Validator](validator/README.md)
 - [Sourcefinder](sourcefinder/README.md)
-- [Implementation Details](IMPLEMENTATION.md)

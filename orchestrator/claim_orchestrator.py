@@ -5,7 +5,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from collections import defaultdict
 
 from models import ClaimObject, ValidationResult, ValidationBatch, CitationDetails
@@ -106,11 +106,16 @@ class ClaimOrchestrator:
         results["qualitative_uncited"] = self._process_uncited_qualitative(qual_uncited)
         step_timings["qualitative_uncited"] = round(time.time() - t0, 2)
 
-        # Step 2: Quantitative without citation
+        # Step 2: Quantitative without citation.
+        # Splits into (a) claims with a dataset source found — routed to Step 4, and
+        # (b) terminal direct_results (truth-table/LLM verified OR no source found) —
+        # written directly to quantitative_uncited_results.json.
         logger.info("\nStep 2: Processing quantitative claims without citations...")
         quant_uncited = [c for c in claims if c.claim_type == "quantitative" and not c.citation_id]
         t0 = time.time()
-        quant_with_found_sources = self._process_uncited_quantitative(quant_uncited)
+        quant_with_found_sources, quant_uncited_direct_results = \
+            self._process_uncited_quantitative(quant_uncited)
+        results["quantitative_uncited"] = quant_uncited_direct_results
         step_timings["quantitative_uncited"] = round(time.time() - t0, 2)
 
         # Step 3: Qualitative with citation (matches README ordering: qual cited before quant cited)
@@ -121,11 +126,10 @@ class ClaimOrchestrator:
         step_timings["qualitative_cited"] = round(time.time() - t0, 2)
 
         # Step 4: Combine originally-uncited-now-cited + originally-cited quantitative.
-        # Only include quant_with_found_sources entries that actually resolved a citation_id;
-        # claims that remained uncited (no source found) are not passed here.
+        # quant_with_found_sources already only contains claims that resolved a dataset.
         logger.info("\nStep 4: Processing quantitative claims with citations...")
         quant_cited = [c for c in claims if c.claim_type == "quantitative" and c.citation_id]
-        all_quant_cited = [c for c in quant_with_found_sources if c.citation_id] + quant_cited
+        all_quant_cited = quant_with_found_sources + quant_cited
         t0 = time.time()
         results["quantitative_cited"] = self._process_cited_quantitative(all_quant_cited)
         step_timings["quantitative_cited"] = round(time.time() - t0, 2)
@@ -233,15 +237,23 @@ class ClaimOrchestrator:
 
         return results
 
-    def _process_uncited_quantitative(self, claims: List[ClaimObject]) -> List[ClaimObject]:
+    def _process_uncited_quantitative(
+        self, claims: List[ClaimObject]
+    ) -> Tuple[List[ClaimObject], List[ValidationResult]]:
         """
         Process quantitative claims without citations.
         - Truth Table + LLM Check
         - If not sufficiently answered, use sourcefinder
-        - Append found sources to claims
-        - DO NOT VALIDATE YET - return modified claims for later processing
+
+        Returns:
+          - claims_to_route: only claims where a dataset source was found —
+            these proceed to Step 4 batch validation with citation_id="found_{claim_id}".
+          - direct_results: ValidationResults for the two terminal branches that
+            do NOT proceed further (truth-table/LLM verified, and no-dataset-found).
+            These land directly in quantitative_uncited_results.json.
         """
-        modified_claims = []
+        claims_to_route: List[ClaimObject] = []
+        direct_results: List[ValidationResult] = []
 
         for claim in claims:
             logger.info(f"  Processing: {claim.claim_id}")
@@ -249,12 +261,31 @@ class ClaimOrchestrator:
             tt_result = self.truth_table.check_claim(claim.text)
             llm_result = self.llm_verifier.verify_claim(claim.text)
 
+            # Branch A: Truth-table / LLM strongly verified — no dataset needed.
             if (tt_result['found'] and tt_result['confidence'] > 0.8) or \
                (llm_result['plausible'] and llm_result['confidence'] > 0.8):
                 logger.info("    Claim verified by truth table/LLM, skipping sourcefinder")
-                modified_claims.append(claim)
+                passed = tt_result['found'] or llm_result['plausible']
+                confidence = max(tt_result['confidence'], llm_result['confidence'])
+                explanation = (
+                    f"Truth Table: {tt_result['explanation']}. "
+                    f"LLM Check: {llm_result['reasoning']}"
+                )
+                direct_results.append(ValidationResult(
+                    claim_id=claim.claim_id,
+                    claim_type=claim.claim_type,
+                    originally_uncited=False,
+                    validated=True,
+                    validation_method="truth_table+llm_only",
+                    confidence=confidence,
+                    passed=passed,
+                    explanation=explanation,
+                    sources_used=tt_result.get('sources', []),
+                ))
+                logger.info(f"    Result: {'PASSED' if passed else 'FAILED'} (confidence: {confidence:.2f})")
                 continue
 
+            # Branch B: Try sourcefinder.
             logger.info("    Searching for dataset...")
             found_source = self.dataset_finder.find_dataset(claim.text, claim.claim_id)
 
@@ -273,12 +304,22 @@ class ClaimOrchestrator:
                     raw_text=f"Found dataset: {found_source.source_url}"
                 )
                 logger.info(f"    ✓ Found dataset: {found_source.source_url}")
+                claims_to_route.append(claim)
             else:
                 logger.warning("    ✗ No dataset found for claim")
+                direct_results.append(ValidationResult(
+                    claim_id=claim.claim_id,
+                    claim_type=claim.claim_type,
+                    originally_uncited=True,
+                    validated=False,
+                    validation_method="source_not_found",
+                    confidence=0.0,
+                    passed=False,
+                    explanation="No dataset source could be located for this uncited quantitative claim.",
+                    sources_used=[],
+                ))
 
-            modified_claims.append(claim)
-
-        return modified_claims
+        return claims_to_route, direct_results
 
     def _process_cited_quantitative(self, claims: List[ClaimObject]) -> List[ValidationBatch]:
         """Process cited quantitative claims in citation batches."""

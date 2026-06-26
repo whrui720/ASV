@@ -25,7 +25,7 @@ Thus, this class searches for appropriate datasets, and manages dataset reuse (p
 
 **API:**
 ```python
-from sourcefinder_tools import DatasetFinder
+from sourcefinder import DatasetFinder
 
 finder = DatasetFinder(llm_client=llm_client)
 
@@ -60,7 +60,7 @@ Used when a quantitative or qualitative claim is detected as verifiable by a tex
 
 **API:**
 ```python
-from sourcefinder_tools import TextFinder
+from sourcefinder import TextFinder
 
 finder = TextFinder(llm_client=llm_client)
 
@@ -97,9 +97,11 @@ Download datasets in various formats:
 
 **API:**
 ```python
-from sourcefinder_tools import DatasetDownloader
+from sourcefinder import DatasetDownloader
+from run_paths import RunPaths
 
-downloader = DatasetDownloader()
+run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
+downloader = DatasetDownloader(run_paths=run_paths)
 
 # Download dataset
 result = downloader.download(
@@ -110,7 +112,7 @@ result = downloader.download(
 # Returns dict:
 # {
 #     "downloaded": true,
-#     "path": "/downloads/datasets/paper123_ref_5.csv",
+#     "path": "runs/{stem}__{ts}/datasets/citation_paper123_ref_5_dataset.csv",
 #     "format": "csv",
 #     "error": null
 # }
@@ -123,14 +125,14 @@ result = downloader.delete_dataset(
 # Returns dict:
 # {
 #     "deleted": true,
-#     "path": "/datasets/citation_paper123_ref_5_dataset.csv",
+#     "path": "runs/{stem}__{ts}/datasets/citation_paper123_ref_5_dataset.csv",
 #     "error": null
 # }
 ```
 
 **Features:**
 - Automatic format detection from URL/content-type
-- Saves to `downloads/datasets/{citation_id}.{ext}`
+- Saves to `run_paths.datasets / citation_{citation_id}_dataset.{ext}` (per-PDF run folder)
 - Handles HTTP errors and timeouts
 - Returns error messages on failure
 
@@ -139,9 +141,11 @@ Download and extract text from PDFs and HTML:
 
 **API:**
 ```python
-from sourcefinder_tools import TextDownloader
+from sourcefinder import TextDownloader
+from run_paths import RunPaths
 
-downloader = TextDownloader()
+run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
+downloader = TextDownloader(run_paths=run_paths)
 
 # Download text source
 result = downloader.download(
@@ -152,7 +156,7 @@ result = downloader.download(
 # Returns dict:
 # {
 #     "downloaded": true,
-#     "path": "/downloads/texts/paper123_ref_8.pdf",
+#     "path": "runs/{stem}__{ts}/text_sources/citation_paper123_ref_8_text.pdf",
 #     "format": "pdf",
 #     "text_content": "Full extracted text...",
 #     "error": null
@@ -166,7 +170,7 @@ result = downloader.delete_text(
 # Returns dict:
 # {
 #     "deleted": true,
-#     "path": "/text_sources/citation_paper123_ref_8_text.pdf",
+#     "path": "runs/{stem}__{ts}/text_sources/citation_paper123_ref_8_text.pdf",
 #     "error": null
 # }
 ```
@@ -175,7 +179,7 @@ result = downloader.delete_text(
 - PDF text extraction using PyPDF2
 - HTML text extraction using BeautifulSoup4
 - Automatic format detection
-- Saves original file to `downloads/texts/{citation_id}.{ext}`
+- Saves original file to `run_paths.text_sources / citation_{citation_id}_text.{ext}` (per-PDF run folder)
 - Returns extracted text in `text_content` field
 
 ## Configuration
@@ -183,20 +187,14 @@ result = downloader.delete_text(
 Settings in `config.py`:
 
 ```python
-# Download directories
-DOWNLOADS_DIR = "downloads"
-DATASET_DOWNLOAD_DIR = "downloads/datasets"
-TEXT_DOWNLOAD_DIR = "downloads/texts"
-
-# API endpoints (placeholders)
-KAGGLE_API_ENDPOINT = "https://www.kaggle.com/api/v1"
-GOOGLE_DATASET_SEARCH_API = "https://datasetsearch.research.google.com"
-ARXIV_API_ENDPOINT = "http://export.arxiv.org/api"
-SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org"
+# Legacy default download directories (used only when no RunPaths is supplied).
+# In production, the active run folder owns these — see run_paths.py.
+DATASET_OUTPUT_DIR = "./datasets"
+TEXT_OUTPUT_DIR = "./text_sources"
 
 # Thresholds
-DATASET_REUSE_CONFIDENCE_THRESHOLD = 0.75
-SOURCE_SEARCH_TIMEOUT = 10  # seconds
+DATASET_REUSE_THRESHOLD = 0.75
+MAX_FILE_SIZE_MB = 500
 DOWNLOAD_TIMEOUT = 30  # seconds
 ```
 

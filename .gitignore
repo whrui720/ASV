@@ -13,9 +13,15 @@ bin/
 # Input pdfs
 pdfs/
 
-# Output/data directories
+# Per-PDF run folders (owns all pipeline artifacts)
+runs/
+
+# Legacy output/data directories (replaced by runs/ — kept here as a safety net)
 datasets/
+generated_scripts/
 text_sources/
+validation_results/
+logs/
 overviews/
 papers/
 pyscripts/

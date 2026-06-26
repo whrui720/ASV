@@ -109,7 +109,7 @@ class HybridClaimExtractor:
         
         print("Extracting claims from chunks...")
         for i, chunk in enumerate(chunks):
-            print(f"  Processing chunk {i+1}/{len(chunks)}...", end="\r")
+            print(f"  Processing chunk {i+1}/{len(chunks)}...")
             
             claims = self.llm_client.extract_claims_from_chunk(
                 chunk['text'],
