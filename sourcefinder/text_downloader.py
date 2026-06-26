@@ -18,6 +18,7 @@ class TextDownloader:
         self,
         run_paths: Optional[RunPaths] = None,
         output_dir: Optional[str] = None,
+        llm_client=None,
     ):
         if run_paths is not None:
             self.output_dir = run_paths.text_sources
@@ -31,7 +32,7 @@ class TextDownloader:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
-        self._paper_finder = AcademicPaperFinder()
+        self._paper_finder = AcademicPaperFinder(llm_client=llm_client)
     
     def download(self, url: str, citation_id: str) -> Dict[str, Any]:
         """

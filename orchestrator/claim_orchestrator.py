@@ -61,7 +61,7 @@ class ClaimOrchestrator:
         self.dataset_finder = DatasetFinder(llm_client=self.llm_client, run_paths=run_paths)
         self.text_finder = TextFinder(llm_client=self.llm_client, run_paths=run_paths)
         self.dataset_downloader = DatasetDownloader(run_paths=run_paths)
-        self.text_downloader = TextDownloader(run_paths=run_paths)
+        self.text_downloader = TextDownloader(run_paths=run_paths, llm_client=self.llm_client)
 
         # Citations dict populated when claims are loaded from JSON
         self.citations_dict: Dict[str, str] = {}

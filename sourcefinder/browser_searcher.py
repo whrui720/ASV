@@ -229,7 +229,11 @@ class BrowserSearcher:
         content (absolute URLs, non-trivial anchor text, not on skip-list domains).
         """
         html = page.content()
-        soup = BeautifulSoup(html, "lxml")
+        try:
+            soup = BeautifulSoup(html, "lxml")
+        except Exception:
+            # lxml not installed — fall back to stdlib parser. Slower but always works.
+            soup = BeautifulSoup(html, "html.parser")
 
         # Remove boilerplate sections
         for tag in soup(["script", "style", "nav", "footer", "header"]):
