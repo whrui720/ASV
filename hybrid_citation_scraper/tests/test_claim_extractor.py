@@ -172,32 +172,98 @@ class TestExtractClaimsFromText:
     
     @patch('hybrid_citation_scraper.claim_extractor.LLMClient')
     @patch('hybrid_citation_scraper.claim_extractor.semantic_chunk_text')
-    def test_extract_claims_updates_location(
+    def test_extract_claims_locates_claim_span(
         self, mock_chunk, mock_llm_client
     ):
-        """Test that claim locations are updated with chunk position"""
+        """start/end are exact character offsets into the full document text."""
+        full_text = "Intro sentence. The sky is blue. Outro sentence."
+        span_start = full_text.index("The sky is blue.")
         mock_chunk.return_value = [
-            {'chunk_id': 0, 'text': 'Chunk', 'start_pos': 100, 'end_pos': 105, 'token_count': 1}
+            {'chunk_id': 0, 'text': 'The sky is blue.',
+             'start_pos': span_start, 'end_pos': span_start + 16, 'token_count': 4}
         ]
-        
+
         claim = ClaimObject(
             claim_id="test",
-            text="Test claim",
+            text="The sky is blue.",
             claim_type="qualitative",
             citation_found=False,
             is_original=True,
-            location_in_text=LocationInText(start=0, end=10, chunk_id=0)
+            location_in_text=LocationInText(chunk_id=0)
         )
-        
+
         mock_llm_instance = mock_llm_client.return_value
         mock_llm_instance.extract_claims_from_chunk.return_value = [claim]
-        
+
         extractor = HybridClaimExtractor()
-        result = extractor.extract_claims_from_text("Sample text")
-        
-        # Location should be updated with chunk's start position
-        assert result[0].location_in_text.start == 100
-        assert result[0].location_in_text.end == 110
+        result = extractor.extract_claims_from_text(full_text)
+
+        loc = result[0].location_in_text
+        assert loc.start == span_start
+        # Slicing the source with the span must reproduce the claim exactly.
+        assert full_text[loc.start:loc.end] == "The sky is blue."
+
+    @patch('hybrid_citation_scraper.claim_extractor.LLMClient')
+    @patch('hybrid_citation_scraper.claim_extractor.semantic_chunk_text')
+    def test_extract_claims_locates_span_across_whitespace(
+        self, mock_chunk, mock_llm_client
+    ):
+        """Claims whose whitespace was normalized by the LLM are still located."""
+        # Source has a newline the LLM collapsed to a single space.
+        full_text = "The results\nwere significant."
+        mock_chunk.return_value = [
+            {'chunk_id': 0, 'text': full_text,
+             'start_pos': 0, 'end_pos': len(full_text), 'token_count': 4}
+        ]
+
+        claim = ClaimObject(
+            claim_id="test",
+            text="The results were significant.",  # single space, no newline
+            claim_type="qualitative",
+            citation_found=False,
+            is_original=True,
+            location_in_text=LocationInText(chunk_id=0)
+        )
+
+        mock_llm_instance = mock_llm_client.return_value
+        mock_llm_instance.extract_claims_from_chunk.return_value = [claim]
+
+        extractor = HybridClaimExtractor()
+        result = extractor.extract_claims_from_text(full_text)
+
+        loc = result[0].location_in_text
+        assert full_text[loc.start:loc.end] == "The results\nwere significant."
+
+    @patch('hybrid_citation_scraper.claim_extractor.LLMClient')
+    @patch('hybrid_citation_scraper.claim_extractor.semantic_chunk_text')
+    def test_extract_claims_unlocatable_span_is_none(
+        self, mock_chunk, mock_llm_client
+    ):
+        """A claim the LLM paraphrased beyond matching yields None offsets."""
+        mock_chunk.return_value = [
+            {'chunk_id': 0, 'text': 'Some source text.',
+             'start_pos': 0, 'end_pos': 17, 'token_count': 3}
+        ]
+
+        claim = ClaimObject(
+            claim_id="test",
+            text="A completely different paraphrase.",
+            claim_type="qualitative",
+            citation_found=False,
+            is_original=True,
+            location_in_text=LocationInText(chunk_id=0)
+        )
+
+        mock_llm_instance = mock_llm_client.return_value
+        mock_llm_instance.extract_claims_from_chunk.return_value = [claim]
+
+        extractor = HybridClaimExtractor()
+        result = extractor.extract_claims_from_text("Some source text.")
+
+        loc = result[0].location_in_text
+        assert loc.start is None
+        assert loc.end is None
+        assert loc.chunk_id == 0
     
     @patch('hybrid_citation_scraper.claim_extractor.LLMClient')
     @patch('hybrid_citation_scraper.claim_extractor.semantic_chunk_text')

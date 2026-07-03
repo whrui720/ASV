@@ -9,6 +9,7 @@ Architecture:
 """
 
 import json
+import re
 import sys
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
@@ -31,7 +32,45 @@ from .utils import (
     semantic_chunk_text
 )
 from .llm_client import LLMClient
-from models import ClaimObject, CitationDetails
+from models import ClaimObject, CitationDetails, LocationInText
+
+
+def _locate_claim_span(
+    full_text: str, claim_text: str, hint: int = 0
+) -> Tuple[Optional[int], Optional[int]]:
+    """Return the (start, end) character offsets of ``claim_text`` in ``full_text``.
+
+    The LLM returns claim text but no offsets, and it often normalizes
+    whitespace (collapsing newlines and runs of spaces). We therefore try an
+    exact substring match first, then fall back to a whitespace-tolerant regex
+    that matches the same non-whitespace tokens across any run of whitespace.
+
+    ``hint`` (the claim's chunk ``start_pos``) is used as a search start so that
+    a sentence repeated elsewhere in the document resolves to the occurrence in
+    the claim's own chunk. Returns ``(None, None)`` when the claim cannot be
+    located (e.g. the LLM paraphrased it), so callers can tell "unknown" apart
+    from "offset 0".
+    """
+    if not claim_text:
+        return None, None
+
+    # Exact match: prefer an occurrence at/after the hint, else search from 0.
+    for start_at in (max(0, hint), 0):
+        idx = full_text.find(claim_text, start_at)
+        if idx != -1:
+            return idx, idx + len(claim_text)
+
+    # Whitespace-tolerant fallback: match the claim's tokens across any gaps.
+    tokens = claim_text.split()
+    if not tokens:
+        return None, None
+    pattern = re.compile(r"\s+".join(re.escape(tok) for tok in tokens))
+    for start_at in (max(0, hint), 0):
+        match = pattern.search(full_text, start_at)
+        if match:
+            return match.start(), match.end()
+
+    return None, None
 
 
 class HybridClaimExtractor:
@@ -119,12 +158,19 @@ class HybridClaimExtractor:
                 paper_abstract=self.paper_abstract
             )
             
-            # Update location information
+            # Record each claim's exact character span in the full document
+            # text so consumers can highlight it in the source. The chunk's
+            # start_pos is only a search hint here — offsets are resolved
+            # against the real text, not the whitespace-normalized chunk.
             for claim in claims:
-                if claim.location_in_text:
-                    claim.location_in_text.start += chunk['start_pos']
-                    claim.location_in_text.end += chunk['start_pos']
-            
+                start, end = _locate_claim_span(
+                    text, claim.text, hint=chunk['start_pos']
+                )
+                if claim.location_in_text is None:
+                    claim.location_in_text = LocationInText(chunk_id=chunk['chunk_id'])
+                claim.location_in_text.start = start
+                claim.location_in_text.end = end
+
             all_claims.extend(claims)
         
         print(f"\n✓ Extracted {len(all_claims)} claims")
