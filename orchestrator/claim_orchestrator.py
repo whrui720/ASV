@@ -333,16 +333,23 @@ class ClaimOrchestrator:
             logger.info(f"  Batch [{citation_id}]: {len(claims_group)} claims")
             first_claim = claims_group[0]
 
-            # Resolve URL: use known URL → open-access resolution → give up
-            url = first_claim.citation_details.url if first_claim.citation_details else None
-            if not url:
-                raw_citation_text = self.citations_dict.get(str(citation_id), "")
-                url = self.text_downloader._paper_finder.find_url(raw_citation_text)
+            # Resolve URL: use known URL → open-access candidates → iterate on 4xx.
+            candidate_urls: list[str] = []
+            if first_claim.citation_details and first_claim.citation_details.url:
+                candidate_urls.append(first_claim.citation_details.url)
+            raw_citation_text = self.citations_dict.get(str(citation_id), "")
+            if raw_citation_text:
+                candidate_urls.extend(
+                    u for u in self.text_downloader._paper_finder.find_urls(raw_citation_text)
+                    if u not in candidate_urls
+                )
 
-            if url:
+            download_result = {'downloaded': False, 'error': 'No URL found via open-access APIs'}
+            for i, url in enumerate(candidate_urls, 1):
+                logger.info(f"    Attempt {i}/{len(candidate_urls)}: {url}")
                 download_result = self.dataset_downloader.download(url, citation_id)
-            else:
-                download_result = {'downloaded': False, 'error': 'No URL found via open-access APIs'}
+                if download_result['downloaded']:
+                    break
 
             if not download_result['downloaded']:
                 logger.error(f"    ✗ Download failed: {download_result.get('error')}")

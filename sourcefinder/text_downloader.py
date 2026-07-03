@@ -29,8 +29,15 @@ class TextDownloader:
             self.output_dir = Path(TEXT_OUTPUT_DIR)
             self.output_dir.mkdir(parents=True, exist_ok=True)
         self.session = requests.Session()
+        # Browser-like headers reduce trivial 403s from publishers that sniff UA.
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/120.0.0.0 Safari/537.36'
+            ),
+            'Accept': 'application/pdf,text/html;q=0.9,application/xhtml+xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
         })
         self._paper_finder = AcademicPaperFinder(llm_client=llm_client)
     
@@ -135,19 +142,27 @@ class TextDownloader:
 
         Resolution order:
           1. Use citation_details.url directly if already populated
-          2. Use AcademicPaperFinder (Unpaywall → Semantic Scholar → CrossRef)
+          2. Use AcademicPaperFinder — iterates candidate URLs, tries each on 4xx failure
           3. Use institutional cookies on the landing page if configured
         """
         # 1. Direct URL already known
         if citation_details and citation_details.url:
             logger.info(f"Downloading from known URL: {citation_details.url}")
-            return self.download(citation_details.url, citation_id)
+            direct = self.download(citation_details.url, citation_id)
+            if direct['downloaded']:
+                return direct
+            logger.info("  Direct URL failed; falling back to open-access resolution.")
 
-        # 2. Try open-access resolution
+        # 2. Try open-access resolution — iterate over ranked candidates.
         logger.info(f"Resolving citation [{citation_id}]: {raw_citation_text[:80]}...")
-        resolved_url = self._paper_finder.find_url(raw_citation_text)
-        if resolved_url:
-            return self.download(resolved_url, citation_id)
+        candidates = self._paper_finder.find_urls(raw_citation_text)
+        last_error: Optional[str] = None
+        for i, url in enumerate(candidates, 1):
+            logger.info(f"  Attempt {i}/{len(candidates)}: {url}")
+            result = self.download(url, citation_id)
+            if result['downloaded']:
+                return result
+            last_error = result.get('error')
 
         # 3. Institutional cookie fallback — try CrossRef landing page URL if we have it
         if INSTITUTIONAL_COOKIES:
@@ -171,8 +186,9 @@ class TextDownloader:
                         'error': None,
                     }
 
+        err = last_error or 'No URL found via open-access APIs or institutional cookies'
         return {'downloaded': False, 'format': None, 'path': None, 'text_content': None,
-                'error': 'No URL found via open-access APIs or institutional cookies'}
+                'error': err}
 
     def delete_text(self, filename: str) -> Dict[str, Any]:
         """
