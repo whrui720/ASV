@@ -81,11 +81,43 @@ class ValidationResult(BaseModel):
     validated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
+class ResolutionAttempt(BaseModel):
+    """One URL try when resolving a citation to a downloadable source."""
+    url: str
+    source: str  # "direct", "open_access", "found_dataset", "institutional_cookies"
+    downloaded: bool
+    error: Optional[str] = None
+
+
 class ValidationBatch(BaseModel):
     """Results for a batch of claims sharing same citation"""
     citation_id: str
     citation_text: Optional[str] = None
     download_successful: bool
     source_path: Optional[str] = None
+    source_url: Optional[str] = None
+    resolution_attempts: List[ResolutionAttempt] = Field(default_factory=list)
     claim_results: List[ValidationResult]
     batch_notes: str
+
+
+class SourceManifestEntry(BaseModel):
+    """One record in the per-run datasets/ or text_sources/ manifest.
+
+    Survives batch cleanup: the local file at ``filename`` is deleted after the
+    batch completes, but this entry preserves everything needed to trace the
+    source (title, URL cascade, format, timestamps, batch outcome).
+    """
+    citation_id: str
+    citation_text: Optional[str] = None
+    raw_citation_text: Optional[str] = None
+    citation_details: Optional[CitationDetails] = None
+    resolution_attempts: List[ResolutionAttempt] = Field(default_factory=list)
+    winning_url: Optional[str] = None
+    format: Optional[str] = None
+    filename: Optional[str] = None
+    downloaded_at: Optional[str] = None
+    deleted_at: Optional[str] = None
+    batch_num_claims: int = 0
+    batch_download_successful: bool = False
+    found_source: Optional[FoundDatasetSource] = None

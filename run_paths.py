@@ -105,3 +105,9 @@ class RunPaths:
 
     def orchestration_log(self) -> Path:
         return self.logs / "orchestration.log"
+
+    def datasets_manifest_json(self) -> Path:
+        return self.datasets / "_manifest.json"
+
+    def text_sources_manifest_json(self) -> Path:
+        return self.text_sources / "_manifest.json"

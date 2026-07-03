@@ -144,12 +144,29 @@ class TextDownloader:
           1. Use citation_details.url directly if already populated
           2. Use AcademicPaperFinder — iterates candidate URLs, tries each on 4xx failure
           3. Use institutional cookies on the landing page if configured
+
+        The returned dict includes an ``attempts`` list — one entry per URL tried,
+        tagged with the resolution phase (``direct`` / ``open_access`` /
+        ``institutional_cookies``) — so callers can persist the full cascade.
         """
+        attempts: list[dict] = []
+
+        def _record(url: str, source: str, result: Dict[str, Any]) -> None:
+            attempts.append({
+                'url': url,
+                'source': source,
+                'downloaded': bool(result.get('downloaded')),
+                'error': result.get('error'),
+            })
+
         # 1. Direct URL already known
         if citation_details and citation_details.url:
             logger.info(f"Downloading from known URL: {citation_details.url}")
             direct = self.download(citation_details.url, citation_id)
+            _record(citation_details.url, 'direct', direct)
             if direct['downloaded']:
+                direct['attempts'] = attempts
+                direct['winning_url'] = citation_details.url
                 return direct
             logger.info("  Direct URL failed; falling back to open-access resolution.")
 
@@ -160,7 +177,10 @@ class TextDownloader:
         for i, url in enumerate(candidates, 1):
             logger.info(f"  Attempt {i}/{len(candidates)}: {url}")
             result = self.download(url, citation_id)
+            _record(url, 'open_access', result)
             if result['downloaded']:
+                result['attempts'] = attempts
+                result['winning_url'] = url
                 return result
             last_error = result.get('error')
 
@@ -178,17 +198,33 @@ class TextDownloader:
                     local_path = self.output_dir / filename
                     local_path.write_bytes(content)
                     text_content = self._extract_html_text(content.decode("utf-8", errors="replace"))
+                    attempts.append({
+                        'url': landing,
+                        'source': 'institutional_cookies',
+                        'downloaded': True,
+                        'error': None,
+                    })
                     return {
                         'downloaded': True,
                         'format': 'html',
                         'path': str(local_path),
                         'text_content': text_content,
                         'error': None,
+                        'attempts': attempts,
+                        'winning_url': landing,
                     }
+                attempts.append({
+                    'url': landing,
+                    'source': 'institutional_cookies',
+                    'downloaded': False,
+                    'error': 'fetch_with_cookies returned empty content',
+                })
 
         err = last_error or 'No URL found via open-access APIs or institutional cookies'
-        return {'downloaded': False, 'format': None, 'path': None, 'text_content': None,
-                'error': err}
+        return {
+            'downloaded': False, 'format': None, 'path': None, 'text_content': None,
+            'error': err, 'attempts': attempts, 'winning_url': None,
+        }
 
     def delete_text(self, filename: str) -> Dict[str, Any]:
         """
