@@ -193,11 +193,9 @@ class LLMClient:
                     citation_text=claim_data.get("citation_marker"),
                     citation_details=None,  # Will be populated later
                     is_original=claim_data.get("is_original", False),
-                    location_in_text=LocationInText(
-                        start=0,  # Would need more sophisticated tracking
-                        end=0,
-                        chunk_id=chunk_id
-                    )
+                    # start/end are filled in by the extractor, which has the
+                    # full document text to locate the claim against.
+                    location_in_text=LocationInText(chunk_id=chunk_id)
                 )
                 claims.append(claim)
 

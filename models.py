@@ -16,9 +16,15 @@ class CitationDetails(BaseModel):
 
 
 class LocationInText(BaseModel):
-    """Location of claim in source text"""
-    start: int
-    end: int
+    """Character span of a claim within the full extracted document text.
+
+    ``start``/``end`` are absolute character offsets into the text passed to the
+    claim extractor (the full PDF text), suitable for highlighting the claim in
+    the source. They are ``None`` when the claim could not be located in the
+    source text (e.g. the LLM paraphrased it beyond a whitespace-tolerant match).
+    """
+    start: Optional[int] = None
+    end: Optional[int] = None
     chunk_id: Optional[int] = None
 
 
