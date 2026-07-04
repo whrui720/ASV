@@ -423,10 +423,10 @@ class AcademicPaperFinder:
             if u and ("pdf" in ct or "pdf" in u.lower()):
                 urls.append(u)
 
-        # Include landing page URL as a lower-priority fallback.
-        landing = data.get("message", {}).get("URL")
-        if landing and landing not in urls:
-            urls.append(landing)
+        # Skip the DOI landing URL (message.URL). It resolves to the publisher
+        # landing page, which is almost never a direct download and — with an
+        # Accept header requesting JSON — content-negotiates to CrossRef
+        # metadata that downstream code can mistake for a real payload.
 
         if urls:
             logger.debug(f"  CrossRef: {len(urls)} candidate(s)")
