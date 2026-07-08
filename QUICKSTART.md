@@ -151,28 +151,44 @@ for batch in results["quantitative_cited"]:
 
 Edit `validator/config.py`:
 ```python
-TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.7  # Lower = more lenient
-LLM_CONFIDENCE_THRESHOLD = 0.6
-RAG_SIMILARITY_THRESHOLD = 0.3  # Lower = retrieve more chunks
-SCRIPT_TIMEOUT_SECONDS = 30  # Script execution timeout
+TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.8       # Lower = more lenient
+LLM_VERIFIER_CONFIDENCE_THRESHOLD = 0.8
+DATASET_REUSE_CONFIDENCE = 0.75
+
+RAG_TOP_K = 3                                # Max chunks fed to the LLM
+RAG_SIMILARITY_THRESHOLD = 0.15              # Lower = more chunks pass to the LLM
+RAG_MIN_CHUNK_LENGTH = 50
+RAG_MAX_CHUNK_LENGTH = 500
+
+SCRIPT_TIMEOUT_SECONDS = 30                  # Python-script validator timeout
+LLM_TEMPERATURE = 0.2
+LLM_MAX_RETRIES = 3
 ```
+
+`RAG_SIMILARITY_THRESHOLD` is the cosine-similarity floor for a chunk to reach the LLM. It was `0.3` and was lowered to `0.15` after empirical testing showed that many quantitative claims had legitimate matches sitting just below the old threshold. Raising it makes the pipeline stricter (fewer chunks reach the LLM); lowering it gives the LLM more context to reason over but risks noise.
 
 ### Adjust Claim Extraction
 
 Edit `hybrid_citation_scraper/config.py`:
 ```python
-CHUNK_SIZE = 800  # Larger = fewer API calls but less precise
+CHUNK_SIZE = 800     # Larger = fewer API calls but less precise
 CHUNK_OVERLAP = 100  # Overlap between chunks
-REFERENCE_SECTION_THRESHOLD = 0.7  # 70% through document
 ```
 
-### Adjust Dataset Reuse
+### Adjust Source Finding / Downloading
 
 Edit `sourcefinder/config.py`:
 ```python
-DATASET_REUSE_CONFIDENCE_THRESHOLD = 0.75  # Higher = less reuse
-DOWNLOAD_TIMEOUT = 30  # Seconds
+DATASET_REUSE_THRESHOLD = 0.75  # Higher = less dataset reuse
+DOWNLOAD_TIMEOUT = 60           # Seconds
+MAX_FILE_SIZE_MB = 500
 ```
+
+Edit `sourcefinder/text_downloader.py`:
+```python
+_MIN_USABLE_TEXT_CHARS = 200  # Min non-whitespace extracted chars to accept a download
+```
+If a downloaded PDF/HTML extracts less than this, the file is deleted and the next candidate URL is tried. Raise this to be stricter (reject more responses); lower it if paywalled short abstracts should count as a success.
 
 ## Troubleshooting
 
@@ -192,6 +208,20 @@ pip install scikit-learn
 - Check the citation URL is valid
 - Check network connection
 - Check timeout settings in `sourcefinder/config.py`
+
+### "URL is not tabular data (detected: application/pdf)"
+`DatasetDownloader` explicitly rejects non-tabular payloads. This is normal — the orchestrator's cascade will move to the next candidate URL. If every candidate for a batch is a PDF, the batch is genuinely paper-backed (not dataset-backed); if the batch is quantitative cited, it will be routed through `_process_paper_backed_quant` (RAG) instead of the strict script-validator path.
+
+### "Extraction produced N usable chars (<200); format=..."
+`TextDownloader` treats short extractions as failures. Common causes:
+- The URL served an HTML login-wall (Wiley/ASM/OUP paywalls do this even to `.pdf` URLs)
+- PDF was scanned images with no embedded text — none of `pymupdf`, `pdfminer.six`, or `pypdf` could extract anything
+- HTML page had no `<article>`/`<main>` container after stripping nav chrome
+
+If the orchestrator iterates through every candidate and every one fails this way, the batch's `download_successful=False` — the source is genuinely inaccessible in open form.
+
+### "No relevant chunks found in source"
+The RAG retriever found nothing above `RAG_SIMILARITY_THRESHOLD` in the downloaded text. Try lowering the threshold in `validator/config.py`. Common when the paper text is very long (many low-similarity chunks) or when the claim uses different terminology than the source.
 
 ### "Script execution timeout"
 Increase timeout in `validator/config.py`:

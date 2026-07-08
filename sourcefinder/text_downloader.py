@@ -221,18 +221,86 @@ class TextDownloader:
         return ""
 
     def _extract_html_text(self, html_content: str) -> str:
-        """Extract text from HTML"""
+        """
+        Extract text from HTML.
+
+        Publisher pages (Nature, Springer, etc.) wrap the actual article body in
+        a lot of navigation chrome — "Skip to main content", cookie banners, sign-in
+        prompts, related-article rails. Feeding all of that to RAG dilutes TF-IDF
+        similarity and lets nav phrases outrank real content.
+
+        Strategy:
+          1. Strip obvious non-content elements (script, style, nav, header, footer,
+             aside, form, button, and elements with common junk classes/ids).
+          2. Look for a semantic article container (``<article>``, ``<main>``,
+             ``[role="main"]``, or common publisher-specific selectors).
+          3. If found, extract text only from that container. Otherwise fall back
+             to whole-document text.
+        """
         try:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_content, 'html.parser')
-            # Remove script and style elements
-            for script in soup(["script", "style"]):
-                script.decompose()
-            text = soup.get_text()
-            # Clean up whitespace
+
+            # 1. Kill non-content elements.
+            for tag in soup(["script", "style", "nav", "header", "footer",
+                             "aside", "form", "button", "noscript", "iframe"]):
+                tag.decompose()
+
+            # Kill common junk containers by class/id (banners, cookie prompts,
+            # related-article rails, sign-in blocks). Snapshot first — decompose()
+            # detaches descendants and iterating a live tree would then crash.
+            junk_patterns = ("cookie", "banner", "signin", "sign-in", "login",
+                             "related", "sidebar", "advert", "promo", "footer",
+                             "header", "nav", "skip-link", "menu", "share",
+                             "citation-tools", "metrics", "altmetric")
+
+            def _classes_of(el):
+                c = el.get("class")
+                if not c:
+                    return ""
+                return " ".join(c).lower() if isinstance(c, list) else str(c).lower()
+
+            junk_class_els = [
+                el for el in list(soup.find_all(attrs={"class": True}))
+                if el is not None and el.parent is not None
+                and any(p in _classes_of(el) for p in junk_patterns)
+            ]
+            for el in junk_class_els:
+                if el.parent is not None:
+                    el.decompose()
+
+            junk_id_els = [
+                el for el in list(soup.find_all(attrs={"id": True}))
+                if el is not None and el.parent is not None
+                and any(p in str(el.get("id", "")).lower() for p in junk_patterns)
+            ]
+            for el in junk_id_els:
+                if el.parent is not None:
+                    el.decompose()
+
+            # 2. Prefer a semantic article container.
+            #    Common publisher selectors (Nature/Springer use ``.c-article-body``,
+            #    ScienceDirect uses ``#body``, PMC uses ``.jig-ncbiinpagenav``…).
+            container = (
+                soup.find("article")
+                or soup.find("main")
+                or soup.find(attrs={"role": "main"})
+                or soup.find(class_="c-article-body")
+                or soup.find(class_="article-body")
+                or soup.find(class_="article__body")
+                or soup.find(id="article-body")
+                or soup.find(id="main-content")
+                or soup.find(id="content")
+                or soup.body
+                or soup
+            )
+
+            text = container.get_text(separator="\n")
+
+            # 3. Whitespace cleanup.
             lines = (line.strip() for line in text.splitlines())
             chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
+            text = "\n".join(chunk for chunk in chunks if chunk)
             return text
         except Exception as e:
             logger.error(f"HTML extraction failed: {e}")
