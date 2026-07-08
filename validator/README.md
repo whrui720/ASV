@@ -101,19 +101,35 @@ Key settings in `config.py`:
 
 ```python
 # Validation thresholds
-TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.7
-LLM_CONFIDENCE_THRESHOLD = 0.6
+TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.8
+LLM_VERIFIER_CONFIDENCE_THRESHOLD = 0.8
+DATASET_REUSE_CONFIDENCE = 0.75
+
+# LLM behavior
+LLM_TEMPERATURE = 0.2
+LLM_MAX_RETRIES = 3
 
 # RAG settings
 RAG_TOP_K = 3
-RAG_SIMILARITY_THRESHOLD = 0.3
+RAG_TOP_K_CHUNKS = 3
+RAG_MIN_CHUNK_LENGTH = 50
+RAG_MAX_CHUNK_LENGTH = 500
+RAG_SIMILARITY_THRESHOLD = 0.15  # lowered from 0.3 — see note below
 
 # Script execution
+SCRIPT_TIMEOUT = 60
 SCRIPT_TIMEOUT_SECONDS = 30
+SCRIPT_MAX_OUTPUT_LENGTH = 10000
 
 # API keys
 GOOGLE_FACT_CHECK_API_KEY = os.getenv('GOOGLE_FACT_CHECK_API_KEY')
 ```
+
+### `RAG_SIMILARITY_THRESHOLD` note
+
+The cosine-similarity floor for a TF-IDF-retrieved chunk to be forwarded to the LLM. Was `0.3`; lowered to `0.15` after empirical testing showed that ~7 batches per run were silently failing with "No relevant chunks found in source" because legitimate matches sat just below the old threshold. Lowering it lets more chunks reach the LLM, which then decides for itself whether the evidence supports the claim.
+
+The `RAG_TOP_K = 3` cap still bounds the LLM's context to at most 3 chunks per claim, so lowering the threshold doesn't grow prompt size unboundedly — it just reduces false negatives at the retrieval step.
 
 ## Usage
 
@@ -158,9 +174,10 @@ requests
 - JSON parsing errors → validation failed
 
 ### RAG Processing
-- Fallback to first K chunks if TF-IDF fails
-- Empty source text → validation failed
-- LLM errors → validation failed with error message
+- Empty source text → returns `{"passed": False, "explanation": "Source text is empty or could not be chunked"}`. (In practice this path rarely fires because `TextDownloader`'s 200-char gate rejects empty extractions upstream — the batch is marked `download_successful=False` before RAG is even attempted.)
+- No chunks above `RAG_SIMILARITY_THRESHOLD` → returns `{"passed": False, "explanation": "No relevant chunks found in source"}`. Lowering the threshold in `config.py` reduces the rate of this false-negative failure.
+- TF-IDF vectorization exception → soft fallback to the first K chunks, unranked. This is intentional so that a scikit-learn error doesn't cascade into a batch failure.
+- LLM errors → validation failed with error message on `ValidationResult.errors`
 
 ## Integration with Other Modules
 

@@ -227,12 +227,17 @@ Edit `config.py` to customize:
 
 ```python
 # Chunking
-CHUNK_SIZE = 800                      # Tokens per chunk
-CHUNK_OVERLAP = 100                   # Character overlap between chunks
+CHUNK_SIZE = 800     # Tokens per chunk
+CHUNK_OVERLAP = 100  # Character overlap between chunks
 
-# Reference section
-REFERENCE_SECTION_THRESHOLD = 0.7     # Start searching at 70% through doc
+# Reference section detection (currently hard-coded in claim_extractor.py)
+# 70% through the document is the heuristic starting point for the search.
 ```
+
+`config.py` also holds `CITATION_STYLES` (regex patterns for numeric, bracket-numeric,
+APA, MLA, Chicago, Vancouver formats) and `REFERENCE_KEYWORDS` (the strings used to
+locate the reference section). Edit these if you're processing papers in a citation
+style the defaults miss.
 
 Global LLM model routing lives in `llm_config.py` at the workspace root.
 Use that file to configure task-specific model tiers, temperatures, and budgets.

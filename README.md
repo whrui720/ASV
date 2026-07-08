@@ -83,14 +83,14 @@ Given a body of text (academic paper, article, etc.), for each claim:
    - Append to quantitative cited group
 
 3. **Quantitative Cited Claims** (including originally uncited)
-   - Batch by `citation_id`
-   - Download dataset once per batch
-   - Generate Python script to validate claim
-   - Execute script, parse JSON output
+   - Batch by `citation_id`, then split by source shape:
+     - **Dataset-backed** (`found_source` populated by `DatasetFinder`): download tabular data once, generate Python script to validate claim, execute script and parse JSON output
+     - **Paper-backed** (`found_source is None`, i.e. the citation is a paper): download paper text once via `TextDownloader.download_with_resolution`, verify each claim via RAG (TF-IDF + LLM) against the paper — same path as qualitative-cited. `claim_type` stays `"quantitative"`.
+   - Both sub-paths emit `ValidationBatch` into the same output list; downstream consumers don't need to distinguish them.
 
 4. **Qualitative Cited Claims**
    - Batch by `citation_id`
-   - Download text source once per batch
+   - Download text source once per batch via `TextDownloader.download_with_resolution` (iterates OA candidates, rejects <200-char extractions, cleans HTML article body)
    - RAG: TF-IDF retrieval + LLM verification
    - Return confidence + supporting quotes
 
@@ -107,12 +107,15 @@ Given a body of text (academic paper, article, etc.), for each claim:
 **Modules:**
 - `dataset_finder.py`: Search datasets, manage reuse (LLM decides applicability)
 - `text_finder.py`: Search text sources (Scholar, arXiv, etc.)
-- `dataset_downloader.py`: Download CSV/JSON/Excel
-- `text_downloader.py`: Download PDF/HTML, extract text
+- `academic_paper_finder.py`: Resolve citations to open-access URLs via Unpaywall → Semantic Scholar → CrossRef → title-search cascade. Never returns raw DOI landing URLs (those content-negotiate to metadata and rarely serve content).
+- `dataset_downloader.py`: Download CSV/JSON/Excel with content sniffing. Single session GET, format detected from magic bytes + Content-Type + URL; non-tabular payloads (PDF/HTML/JSON metadata) are rejected with an explicit `"URL is not tabular data"` error so the caller can iterate.
+- `text_downloader.py`: Download PDF/HTML with a hardened extraction chain — magic-byte format detection, PDF fallback `pymupdf → pdfminer.six → pypdf`, HTML article-body extraction (strips nav chrome + prefers `<article>/<main>/[role="main"]`), and a 200-char usable-text gate that treats empty extractions as download failures.
 
 **Key Features:**
 - Dataset reuse with confidence threshold (0.75)
-- Automatic format detection
+- Content-sniffing format detection (magic bytes dominate URL and Content-Type)
+- Iterative candidate URL resolution with per-attempt manifest logging
+- 200-char extracted-text gate prevents empty-source silent fallbacks
 - Error handling and timeouts
 
 ## Data Flow
@@ -290,8 +293,10 @@ ASV/
 ├── sourcefinder/                  # Stage 3: Utilities
 │   ├── dataset_finder.py
 │   ├── text_finder.py
-│   ├── dataset_downloader.py
-│   ├── text_downloader.py
+│   ├── academic_paper_finder.py   # OA-URL resolution (Unpaywall / S2 / CrossRef)
+│   ├── dataset_downloader.py      # content-sniffing tabular downloader
+│   ├── text_downloader.py         # hardened PDF/HTML downloader + extractor
+│   ├── source_manifest.py         # per-batch resolution cascade logging
 │   ├── config.py
 │   └── README.md
 │
@@ -304,20 +309,41 @@ ASV/
 
 ## Dependencies
 
+Authoritative list is `requirements.txt`. Highlights:
+
 ```txt
-google-generativeai>=0.8.0
-langchain>=0.1.0
+# LLM
+google-genai>=1.0.0          # Gemini API (replaces legacy google-generativeai)
+google-cloud-bigquery==3.30.0
+
+# NLP / models
+spacy==3.8.4
+scikit-learn>=1.3.0
+scipy==1.15.3
+numpy>=1.24.0
+pandas==2.3.3
+
+# PDF extraction (fallback chain: pymupdf → pdfminer.six → pypdf)
+PyMuPDF==1.25.1
+pdfminer.six
 pypdf>=3.0.0
+PyPDF2>=3.0.0                # legacy, retained for callers that import it
+
+# HTML & content parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+openpyxl>=3.1.0              # xlsx support in DatasetDownloader
+
+# Pipeline glue
+langchain>=0.1.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 requests>=2.31.0
-scikit-learn>=1.3.0
-numpy>=1.24.0
-pandas>=2.0.0
-PyPDF2>=3.0.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
-openpyxl>=3.1.0
+
+# Optional / fallback source finding
+kaggle==1.6.17
+rapidfuzz==3.11.0
+playwright>=1.40.0           # browser fallback for paywalled searches
 ```
 
 ## Configuration
@@ -344,17 +370,26 @@ LLM_MODEL_STRONG=gemini-2.5-pro
 **hybrid_citation_scraper/config.py:**
 - `CHUNK_SIZE = 800`
 - `CHUNK_OVERLAP = 100`
-- `REFERENCE_SECTION_THRESHOLD = 0.7`
 
 **validator/config.py:**
-- `TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.7`
-- `LLM_CONFIDENCE_THRESHOLD = 0.6`
-- `RAG_TOP_K = 3`
+- `TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.8`
+- `LLM_VERIFIER_CONFIDENCE_THRESHOLD = 0.8`
+- `DATASET_REUSE_CONFIDENCE = 0.75`
+- `RAG_TOP_K = 3`, `RAG_TOP_K_CHUNKS = 3`
+- `RAG_MIN_CHUNK_LENGTH = 50`, `RAG_MAX_CHUNK_LENGTH = 500`
+- `RAG_SIMILARITY_THRESHOLD = 0.15` — lowered from `0.3` so borderline retrieval hits reach the LLM instead of being silently dropped. Top-K (3) still caps context size.
 - `SCRIPT_TIMEOUT_SECONDS = 30`
 
 **sourcefinder/config.py:**
-- `DATASET_REUSE_CONFIDENCE_THRESHOLD = 0.75`
-- `DOWNLOAD_TIMEOUT = 30`
+- `DATASET_REUSE_THRESHOLD = 0.75`
+- `DOWNLOAD_TIMEOUT = 60`
+- `MAX_FILE_SIZE_MB = 500`
+- `INSTITUTIONAL_COOKIES` (env, JSON) — optional per-domain cookies for paywalled sources
+- `KNOWN_PAYWALL_DOMAINS` — canonical list of domains treated as paywalls when routing candidates
+- Open-access API endpoints: `UNPAYWALL_API`, `SEMANTIC_SCHOLAR_API`, `CROSSREF_API`
+
+**sourcefinder/text_downloader.py:**
+- `_MIN_USABLE_TEXT_CHARS = 200` — minimum non-whitespace extracted chars required to consider a download successful. Below this, the file is deleted and `download_with_resolution` iterates to the next candidate.
 
 ### LLM Task Routing Table
 
@@ -387,17 +422,19 @@ Each task entry also includes optional budget and escalation fields:
 - Check scientific accuracy, logical consistency
 - Return confidence + reasoning
 
-### Python Script Validation (Quantitative)
+### Python Script Validation (Quantitative, dataset-backed only)
 - Generate script using LLM
 - Load dataset, perform calculations
 - Output JSON: `{passed, confidence, explanation}`
 - 30-second timeout
+- Runs only for cited-quant claims whose `found_source` points at real tabular data (data.gov / Kaggle / Zenodo etc.). Paper-backed cited-quant claims fall through to RAG below.
 
-### RAG Validation (Qualitative)
-- Split source into chunks (~500 chars)
-- TF-IDF retrieval (top-3)
+### RAG Validation (Qualitative + paper-backed Quantitative)
+- Split source into chunks (~500 chars, sentence-boundary aware)
+- TF-IDF retrieval (top-3, similarity ≥ `RAG_SIMILARITY_THRESHOLD = 0.15`)
 - LLM verifies claim against chunks
-- Return supporting quotes
+- Return `passed`, `confidence`, `explanation`, `supporting_quotes`
+- Same code path is invoked from `_process_cited_qualitative` and `_process_paper_backed_quant`
 
 ## Claim Ordering Rationale
 
@@ -413,9 +450,12 @@ This order maximizes efficiency by:
 
 ## Error Handling
 
-- **Batch downloads fail**: All claims in batch marked as failed
+- **Batch downloads fail**: All claims in batch marked as failed. The batch's `ValidationBatch` has `download_successful=False`, and every `claim_result.errors` includes the underlying error string.
+- **Non-tabular URL served to `DatasetDownloader`**: rejected with `"URL is not tabular data (detected: ...)"`. Caller iterates to next candidate rather than saving PDF/HTML bytes as a dataset.
+- **PDF extraction fails on all three parsers**: returns empty text → 200-char gate fails → download treated as failure → cascade iterates.
+- **HTML login-wall responses**: article-body extractor finds no `<article>`/`<main>` container. If the body text is <200 usable chars, the response is treated as a failure (this is the intended honest-failure path).
 - **Script timeout**: 30s limit, capture stderr
-- **RAG retrieval fails**: Fallback to first K chunks
+- **RAG retrieval fails**: Fallback to first K chunks (only on exception; low-similarity results are simply an empty relevant-chunks list, which fails the batch honestly)
 - **API errors**: Logged, return validation failed
 
 ## Future Enhancements

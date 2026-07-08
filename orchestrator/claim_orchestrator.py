@@ -8,12 +8,16 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from collections import defaultdict
 
-from models import ClaimObject, ValidationResult, ValidationBatch, CitationDetails
+from models import (
+    ClaimObject, ValidationResult, ValidationBatch, CitationDetails,
+    ResolutionAttempt, SourceManifestEntry,
+)
 from hybrid_citation_scraper.llm_client import LLMClient
 from run_paths import RunPaths
 from sourcefinder import DatasetFinder, TextFinder, DatasetDownloader, TextDownloader
 from sourcefinder.browser_searcher import BrowserSearcher
 from sourcefinder.config import KNOWN_PAYWALL_DOMAINS
+from sourcefinder.source_manifest import SourceManifest
 from validator.truth_table_checker import TruthTableChecker
 from validator.llm_verifier import LLMVerifier
 from .process_quantitative import ProcessQuantitative
@@ -62,6 +66,15 @@ class ClaimOrchestrator:
         self.text_finder = TextFinder(llm_client=self.llm_client, run_paths=run_paths)
         self.dataset_downloader = DatasetDownloader(run_paths=run_paths)
         self.text_downloader = TextDownloader(run_paths=run_paths, llm_client=self.llm_client)
+
+        # Persistent per-folder manifests — survive batch cleanup so a run
+        # remains auditable after datasets/text_sources files are deleted.
+        self.dataset_manifest = SourceManifest(
+            run_paths.datasets_manifest_json(), run_paths.pdf_stem
+        )
+        self.text_source_manifest = SourceManifest(
+            run_paths.text_sources_manifest_json(), run_paths.pdf_stem
+        )
 
         # Citations dict populated when claims are loaded from JSON
         self.citations_dict: Dict[str, str] = {}
@@ -322,7 +335,39 @@ class ClaimOrchestrator:
         return claims_to_route, direct_results
 
     def _process_cited_quantitative(self, claims: List[ClaimObject]) -> List[ValidationBatch]:
-        """Process cited quantitative claims in citation batches."""
+        """
+        Route cited-quantitative claims by source shape.
+
+        A claim's ``found_source`` is set only when ``_process_uncited_quantitative``
+        located a real dataset via ``DatasetFinder`` (data.gov, Kaggle, Zenodo, etc.).
+        Those claims carry a genuine tabular URL and go through the strict
+        ``DatasetDownloader → PythonScriptValidator`` path.
+
+        Every other cited-quant claim carries a citation to an *academic paper*.
+        Papers rarely publish raw data at the citation URL — the numbers live in
+        the prose. Route those through the text-source pipeline (same as the
+        cited-qualitative flow) so a paper's PDF/HTML can be RAG-searched by the
+        LLM verifier.
+        """
+        dataset_backed = [c for c in claims if c.found_source is not None]
+        paper_backed = [c for c in claims if c.found_source is None]
+
+        logger.info(
+            f"  Routing quant-cited claims: "
+            f"{len(dataset_backed)} dataset-backed, {len(paper_backed)} paper-backed"
+        )
+
+        results: List[ValidationBatch] = []
+        if dataset_backed:
+            results.extend(self._process_dataset_backed_quant(dataset_backed))
+        if paper_backed:
+            results.extend(self._process_paper_backed_quant(paper_backed))
+        return results
+
+    def _process_dataset_backed_quant(
+        self, claims: List[ClaimObject]
+    ) -> List[ValidationBatch]:
+        """Strict dataset flow: download tabular data, run generated Python script."""
         batches = defaultdict(list)
         for claim in claims:
             batches[claim.citation_id].append(claim)
@@ -330,19 +375,57 @@ class ClaimOrchestrator:
         batch_results = []
 
         for citation_id, claims_group in batches.items():
-            logger.info(f"  Batch [{citation_id}]: {len(claims_group)} claims")
+            logger.info(f"  [dataset] Batch [{citation_id}]: {len(claims_group)} claims")
             first_claim = claims_group[0]
 
-            # Resolve URL: use known URL → open-access resolution → give up
-            url = first_claim.citation_details.url if first_claim.citation_details else None
-            if not url:
-                raw_citation_text = self.citations_dict.get(str(citation_id), "")
-                url = self.text_downloader._paper_finder.find_url(raw_citation_text)
+            # Resolve URL: use known URL → open-access candidates → iterate on 4xx.
+            # Each candidate is tagged with its resolution phase so the manifest
+            # can preserve the full cascade after the batch cleans up.
+            candidates: list[tuple[str, str]] = []  # (url, source_label)
+            if first_claim.citation_details and first_claim.citation_details.url:
+                # Uncited-quant claims that resolved to a dataset arrive here with
+                # citation_details.url populated from FoundDatasetSource — tag
+                # accordingly so the manifest can distinguish them.
+                label = 'found_dataset' if first_claim.found_source else 'direct'
+                candidates.append((first_claim.citation_details.url, label))
+            raw_citation_text = self.citations_dict.get(str(citation_id), "")
+            if raw_citation_text:
+                for u in self.text_downloader._paper_finder.find_urls(raw_citation_text):
+                    if u not in [c[0] for c in candidates]:
+                        candidates.append((u, 'open_access'))
 
-            if url:
+            attempts: list[ResolutionAttempt] = []
+            download_result = {'downloaded': False, 'error': 'No URL found via open-access APIs'}
+            winning_url: str | None = None
+            for i, (url, source_label) in enumerate(candidates, 1):
+                logger.info(f"    Attempt {i}/{len(candidates)}: {url}")
                 download_result = self.dataset_downloader.download(url, citation_id)
-            else:
-                download_result = {'downloaded': False, 'error': 'No URL found via open-access APIs'}
+                attempts.append(ResolutionAttempt(
+                    url=url,
+                    source=source_label,
+                    downloaded=bool(download_result.get('downloaded')),
+                    error=download_result.get('error'),
+                ))
+                if download_result['downloaded']:
+                    winning_url = url
+                    break
+
+            downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
+            manifest_entry = SourceManifestEntry(
+                citation_id=str(citation_id),
+                citation_text=first_claim.citation_text,
+                raw_citation_text=raw_citation_text or None,
+                citation_details=first_claim.citation_details,
+                resolution_attempts=attempts,
+                winning_url=winning_url,
+                format=download_result.get('format'),
+                filename=Path(download_result['path']).name if download_result.get('path') else None,
+                downloaded_at=downloaded_at,
+                batch_num_claims=len(claims_group),
+                batch_download_successful=bool(download_result.get('downloaded')),
+                found_source=first_claim.found_source,
+            )
+            self.dataset_manifest.append(manifest_entry)
 
             if not download_result['downloaded']:
                 logger.error(f"    ✗ Download failed: {download_result.get('error')}")
@@ -369,6 +452,8 @@ class ClaimOrchestrator:
                         citation_text=first_claim.citation_text,
                         download_successful=False,
                         source_path=None,
+                        source_url=None,
+                        resolution_attempts=attempts,
                         claim_results=claim_results,
                         batch_notes=f"Download failed: {download_result.get('error')}"
                     )
@@ -387,6 +472,7 @@ class ClaimOrchestrator:
             delete_result = self.dataset_downloader.delete_dataset(Path(download_result['path']).name)
             if delete_result['deleted']:
                 logger.info(f"    ✓ Deleted dataset to conserve memory: {download_result['path']}")
+                self.dataset_manifest.mark_deleted(str(citation_id))
             else:
                 logger.warning(f"    ⚠ Failed to delete dataset: {delete_result.get('error')}")
 
@@ -396,6 +482,8 @@ class ClaimOrchestrator:
                     citation_text=first_claim.citation_text,
                     download_successful=True,
                     source_path=download_result['path'],
+                    source_url=winning_url,
+                    resolution_attempts=attempts,
                     claim_results=claim_results,
                     batch_notes=f"Successfully validated {len(claim_results)} claims"
                 )
@@ -403,8 +491,19 @@ class ClaimOrchestrator:
 
         return batch_results
 
-    def _process_cited_qualitative(self, claims: List[ClaimObject]) -> List[ValidationBatch]:
-        """Process cited qualitative claims in citation batches."""
+    def _process_paper_backed_quant(
+        self, claims: List[ClaimObject]
+    ) -> List[ValidationBatch]:
+        """
+        Paper-text flow for cited-quantitative claims.
+
+        Mirrors ``_process_cited_qualitative`` — downloads the paper via
+        ``TextDownloader.download_with_resolution`` and verifies each claim
+        against the paper text via the qualitative RAG + LLM path. The result
+        preserves ``claim_type="quantitative"`` on every ValidationResult (the
+        qual_processor forwards ``claim.claim_type`` verbatim) so consumers can
+        still segment quant vs. qual downstream.
+        """
         batches = defaultdict(list)
         for claim in claims:
             batches[claim.citation_id].append(claim)
@@ -412,13 +511,34 @@ class ClaimOrchestrator:
         batch_results = []
 
         for citation_id, claims_group in batches.items():
-            logger.info(f"  Batch [{citation_id}]: {len(claims_group)} claims")
+            logger.info(f"  [paper] Batch [{citation_id}]: {len(claims_group)} claims")
             first_claim = claims_group[0]
 
             raw_citation_text = self.citations_dict.get(str(citation_id), "")
             download_result = self.text_downloader.download_with_resolution(
                 first_claim.citation_details, citation_id, raw_citation_text
             )
+
+            attempts = [
+                ResolutionAttempt(**a) for a in download_result.get('attempts', [])
+            ]
+            winning_url = download_result.get('winning_url')
+
+            downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
+            manifest_entry = SourceManifestEntry(
+                citation_id=str(citation_id),
+                citation_text=first_claim.citation_text,
+                raw_citation_text=raw_citation_text or None,
+                citation_details=first_claim.citation_details,
+                resolution_attempts=attempts,
+                winning_url=winning_url,
+                format=download_result.get('format'),
+                filename=Path(download_result['path']).name if download_result.get('path') else None,
+                downloaded_at=downloaded_at,
+                batch_num_claims=len(claims_group),
+                batch_download_successful=bool(download_result.get('downloaded')),
+            )
+            self.text_source_manifest.append(manifest_entry)
 
             if not download_result['downloaded']:
                 logger.error(f"    ✗ Download failed: {download_result.get('error')}")
@@ -445,6 +565,8 @@ class ClaimOrchestrator:
                         citation_text=first_claim.citation_text,
                         download_successful=False,
                         source_path=None,
+                        source_url=None,
+                        resolution_attempts=attempts,
                         claim_results=claim_results,
                         batch_notes=f"Download failed: {download_result.get('error')}"
                     )
@@ -463,6 +585,7 @@ class ClaimOrchestrator:
             delete_result = self.text_downloader.delete_text(Path(download_result['path']).name)
             if delete_result['deleted']:
                 logger.info(f"    ✓ Deleted text file to conserve memory: {download_result['path']}")
+                self.text_source_manifest.mark_deleted(str(citation_id))
             else:
                 logger.warning(f"    ⚠ Failed to delete text file: {delete_result.get('error')}")
 
@@ -472,6 +595,110 @@ class ClaimOrchestrator:
                     citation_text=first_claim.citation_text,
                     download_successful=True,
                     source_path=download_result['path'],
+                    source_url=winning_url,
+                    resolution_attempts=attempts,
+                    claim_results=claim_results,
+                    batch_notes=f"Successfully validated {len(claim_results)} claims (paper-text)"
+                )
+            )
+
+        return batch_results
+
+    def _process_cited_qualitative(self, claims: List[ClaimObject]) -> List[ValidationBatch]:
+        """Process cited qualitative claims in citation batches."""
+        batches = defaultdict(list)
+        for claim in claims:
+            batches[claim.citation_id].append(claim)
+
+        batch_results = []
+
+        for citation_id, claims_group in batches.items():
+            logger.info(f"  Batch [{citation_id}]: {len(claims_group)} claims")
+            first_claim = claims_group[0]
+
+            raw_citation_text = self.citations_dict.get(str(citation_id), "")
+            download_result = self.text_downloader.download_with_resolution(
+                first_claim.citation_details, citation_id, raw_citation_text
+            )
+
+            attempts = [
+                ResolutionAttempt(**a) for a in download_result.get('attempts', [])
+            ]
+            winning_url = download_result.get('winning_url')
+
+            downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
+            manifest_entry = SourceManifestEntry(
+                citation_id=str(citation_id),
+                citation_text=first_claim.citation_text,
+                raw_citation_text=raw_citation_text or None,
+                citation_details=first_claim.citation_details,
+                resolution_attempts=attempts,
+                winning_url=winning_url,
+                format=download_result.get('format'),
+                filename=Path(download_result['path']).name if download_result.get('path') else None,
+                downloaded_at=downloaded_at,
+                batch_num_claims=len(claims_group),
+                batch_download_successful=bool(download_result.get('downloaded')),
+            )
+            self.text_source_manifest.append(manifest_entry)
+
+            if not download_result['downloaded']:
+                logger.error(f"    ✗ Download failed: {download_result.get('error')}")
+                claim_results = []
+                for claim in claims_group:
+                    claim_results.append(
+                        ValidationResult(
+                            claim_id=claim.claim_id,
+                            claim_type=claim.claim_type,
+                            originally_uncited=claim.originally_uncited,
+                            validated=False,
+                            validation_method="rag_search",
+                            confidence=0.0,
+                            passed=False,
+                            explanation="Batch failed: text source download unsuccessful",
+                            sources_used=[],
+                            errors=download_result.get('error')
+                        )
+                    )
+
+                batch_results.append(
+                    ValidationBatch(
+                        citation_id=citation_id,
+                        citation_text=first_claim.citation_text,
+                        download_successful=False,
+                        source_path=None,
+                        source_url=None,
+                        resolution_attempts=attempts,
+                        claim_results=claim_results,
+                        batch_notes=f"Download failed: {download_result.get('error')}"
+                    )
+                )
+                continue
+
+            logger.info(f"    ✓ Downloaded text: {download_result['path']}")
+
+            claim_results = []
+            for claim in claims_group:
+                logger.info(f"      Validating: {claim.claim_id}")
+                result = self.qual_processor.validate_claim(claim, download_result.get('text_content'))
+                claim_results.append(result)
+                logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
+
+            delete_result = self.text_downloader.delete_text(Path(download_result['path']).name)
+            if delete_result['deleted']:
+                logger.info(f"    ✓ Deleted text file to conserve memory: {download_result['path']}")
+                self.text_source_manifest.mark_deleted(str(citation_id))
+            else:
+                logger.warning(f"    ⚠ Failed to delete text file: {delete_result.get('error')}")
+
+            batch_results.append(
+                ValidationBatch(
+                    citation_id=citation_id,
+                    citation_text=first_claim.citation_text,
+                    download_successful=True,
+                    source_path=download_result['path'],
+                    source_url=winning_url,
+                    resolution_attempts=attempts,
                     claim_results=claim_results,
                     batch_notes=f"Successfully validated {len(claim_results)} claims"
                 )
