@@ -220,6 +220,23 @@ pip install scikit-learn
 
 If the orchestrator iterates through every candidate and every one fails this way, the batch's `download_successful=False` — the source is genuinely inaccessible in open form.
 
+### Paywalled sources — using the Playwright login flow
+When any `KNOWN_PAYWALL_DOMAINS` (see `sourcefinder/config.py`) appear in the citations, the orchestrator opens a visible Chromium window with a tab per domain at startup and prints:
+
+```
+[ASV] Please log in to the following sites in the browser window:
+  nature.com, sciencedirect.com
+Press Enter here when done to continue the pipeline...
+```
+
+Log in normally in each tab (SSO, institutional proxy, whatever your library uses), then press Enter in the terminal. The pipeline then:
+1. Snapshots every cookie in the browser context via `BrowserSearcher.export_cookies()`.
+2. Injects them into `TextDownloader.session`, `AcademicPaperFinder._session`, and `DatasetDownloader.session` — so subsequent `requests.get()` calls carry your session.
+3. Mirrors them into `AcademicPaperFinder._inst_cookies` by domain so `fetch_with_cookies()` finds them.
+4. If a fetch still fails, `download_with_resolution` step 4 retries each attempted URL through `BrowserSearcher.download_url()`, which uses Playwright's `APIRequestContext` (shares storage state with the browser — closest thing to a real navigation).
+
+Requires `BROWSER_HEADLESS = False` in `sourcefinder/config.py` (the default). For CI/headless usage, populate `INSTITUTIONAL_COOKIES` in `.env` instead — same effect without the manual login prompt.
+
 ### "No relevant chunks found in source"
 The RAG retriever found nothing above `RAG_SIMILARITY_THRESHOLD` in the downloaded text. Try lowering the threshold in `validator/config.py`. Common when the paper text is very long (many low-similarity chunks) or when the claim uses different terminology than the source.
 

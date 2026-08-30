@@ -176,8 +176,9 @@ This cuts ~20–30% nav chrome from Nature/Springer landing pages and starts the
 1. Try `citation_details.url` directly if present
 2. Ask `AcademicPaperFinder.find_urls` for a ranked list of open-access candidates (Unpaywall repository mirrors → publisher PDFs → title fallback)
 3. If `INSTITUTIONAL_COOKIES` env var is set, try the DOI landing page with those cookies
-4. Return the first candidate that both fetches successfully *and* passes the 200-char extraction gate
-5. Along the way, record every attempt (URL, source label, downloaded flag, error) into `result['attempts']` for manifest logging
+4. **Playwright browser fallback** — retry each previously-attempted URL through the authenticated browser context. This step is what makes the manual login flow actually pay off at download time: the orchestrator harvests cookies from the Playwright context right after login and mirrors them into every `requests.Session`, but any candidate that still 4xx-ed under those cookies is retried here through Playwright's `APIRequestContext` (which reuses the browser's storage state). Capped at 5 URLs per batch.
+5. Return the first candidate that both fetches successfully *and* passes the 200-char extraction gate
+6. Along the way, record every attempt (URL, source label, downloaded flag, error) into `result['attempts']` for manifest logging
 
 **API:**
 ```python
@@ -207,7 +208,7 @@ result = downloader.download_with_resolution(
     raw_citation_text="Smith et al. (2023) ... DOI: 10.1234/abc",
 )
 # Above plus:
-# "attempts": [{"url": ..., "source": "direct"|"open_access"|"institutional_cookies",
+# "attempts": [{"url": ..., "source": "direct"|"open_access"|"institutional_cookies"|"browser",
 #               "downloaded": bool, "error": ...}, ...],
 # "winning_url": str | None
 ```
@@ -231,6 +232,22 @@ Resolves a raw citation string (or DOI) to a ranked list of publicly-accessible 
 **Ranking:** Unpaywall repository mirrors (`host_type == "repository"`) rank ahead of publisher landing pages. Within a host, PDFs (`url_for_pdf`) rank ahead of landing pages (`url_for_landing_page`).
 
 **Explicitly excluded from CrossRef output:** the DOI landing URL (`message.URL`, i.e. `https://doi.org/...`). That URL redirects to the publisher's landing page — almost never a direct download — and its inclusion previously triggered content-negotiation issues (see `DatasetDownloader` Accept header note above). PDF links inside the CrossRef record are still included.
+
+### browser_searcher.py
+Playwright-backed browser used for two purposes:
+1. **Fallback source search** — Google Scholar / Zenodo / Figshare / HuggingFace searches when the API cascades in `dataset_finder`, `text_finder`, and `academic_paper_finder` return nothing. LLM ranks the raw links on each results page.
+2. **Human-in-the-loop paywall login + authenticated download**. At pipeline startup, `ClaimOrchestrator._setup_browser_searcher` detects which `KNOWN_PAYWALL_DOMAINS` appear in the citations and opens a non-headless Chromium with a tab per domain. The user logs in manually, presses Enter, and the pipeline then:
+   - Calls `BrowserSearcher.export_cookies()` to harvest every cookie the browser context now holds.
+   - Bridges those cookies into `TextDownloader.session`, `AcademicPaperFinder._session`, and `DatasetDownloader.session` — every `requests.Session` in the pipeline — so subsequent `session.get()` calls carry the user's real login state.
+   - Mirrors the same cookies into `AcademicPaperFinder._inst_cookies` (keyed by domain, leading dot stripped) so `fetch_with_cookies()` finds them by netloc.
+   - When a fetch still fails, `TextDownloader.download_with_resolution` step 4 retries the URL through `BrowserSearcher.download_url()`, which uses Playwright's `APIRequestContext` — this shares storage state with the browser and works even when cookies alone don't (some publishers require full browser-fingerprint parity).
+
+**Key methods:**
+- `open_domains(domains)` — opens each domain in a tab so the user can log in manually. Non-headless required.
+- `export_cookies() -> list[dict]` — snapshot of every cookie in the browser context. Called after the user completes login.
+- `download_url(url) -> Optional[bytes]` — fetch via `context.request.get()` and return raw body bytes. Reuses browser cookies automatically; returns `None` on non-2xx or timeout.
+- `search_google_scholar(query, top_k)` / `search_zenodo` / `search_figshare` / `search_huggingface_datasets` — API-fallback search methods.
+- `get_page_text(url)`, `is_paywalled(url)` — lightweight page inspection helpers.
 
 ## Configuration
 

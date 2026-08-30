@@ -50,7 +50,7 @@ class TextDownloader:
 
     def download(self, url: str, citation_id: str) -> Dict[str, Any]:
         """
-        Download text source from URL.
+        Download text source from URL via ``self.session`` (a ``requests.Session``).
         Returns: {downloaded: bool, format: str, path: str, text_content: str, error: str}
 
         A successful HTTP fetch is not enough. If the payload's extracted text is
@@ -58,42 +58,61 @@ class TextDownloader:
         failure (delete the on-disk file, return ``downloaded=False``) so the
         caller's cascade can try another URL.
         """
+        try:
+            logger.info(f"Downloading text from: {url}")
+            response = self.session.get(url, timeout=DOWNLOAD_TIMEOUT)
+            response.raise_for_status()
+        except Exception as e:
+            logger.error(f"✗ Download failed: {e}")
+            return {
+                'downloaded': False, 'format': None, 'path': None,
+                'text_content': None, 'error': str(e),
+            }
+
+        content_type = response.headers.get('content-type', '').lower()
+        return self._process_bytes(response.content, url, citation_id, content_type)
+
+    def _process_bytes(
+        self,
+        body: bytes,
+        url: str,
+        citation_id: str,
+        content_type: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Save raw bytes, sniff format, extract text, and apply the
+        ``_MIN_USABLE_TEXT_CHARS`` gate. Shared between the ``requests``-based
+        ``download()`` path and the Playwright browser fallback in
+        ``download_with_resolution()`` — both hand off raw bytes to this method
+        so format detection, on-disk layout, and gating rules stay consistent.
+        """
         result = {
             'downloaded': False,
             'format': None,
             'path': None,
             'text_content': None,
-            'error': None
+            'error': None,
         }
 
         local_path: Optional[Path] = None
         try:
-            logger.info(f"Downloading text from: {url}")
-            response = self.session.get(url, timeout=DOWNLOAD_TIMEOUT)
-            response.raise_for_status()
-
             # Detect format — magic-byte sniff dominates URL / content-type
             # hints, because publishers often serve HTML login walls at ``.pdf``
             # URLs and we don't want to feed HTML bytes to a PDF parser (or
             # vice-versa).
-            content_type = response.headers.get('content-type', '').lower()
-            file_format = self._detect_format(url, content_type, response.content[:512])
+            file_format = self._detect_format(url, content_type, body[:512])
 
-            # Save file
             filename = f"citation_{citation_id}_text.{file_format}"
             local_path = self.output_dir / filename
-
-            # Save raw content
             with open(local_path, 'wb') as f:
-                f.write(response.content)
+                f.write(body)
 
-            # Extract text based on format
             if file_format == 'pdf':
                 text_content = self._extract_pdf_text(local_path)
-            elif file_format in ['html', 'htm']:
-                text_content = self._extract_html_text(response.text)
+            elif file_format in ('html', 'htm'):
+                text_content = self._extract_html_text(body.decode('utf-8', errors='replace'))
             else:
-                text_content = response.text
+                text_content = body.decode('utf-8', errors='replace')
 
             # Gate: require meaningful extracted content. Otherwise the RAG step
             # downstream sees nothing and the batch silently degrades to LLM
@@ -119,14 +138,13 @@ class TextDownloader:
             logger.info(f"✓ Downloaded to: {local_path} ({usable_len} chars extracted)")
 
         except Exception as e:
-            # If we saved a file before the failure, clean it up.
             if local_path is not None:
                 try:
                     local_path.unlink(missing_ok=True)  # type: ignore[arg-type]
                 except Exception:
                     pass
             result['error'] = str(e)
-            logger.error(f"✗ Download failed: {e}")
+            logger.error(f"✗ Processing failed: {e}")
 
         return result
 
@@ -185,7 +203,7 @@ class TextDownloader:
         try:
             import fitz  # PyMuPDF
             with fitz.open(path_str) as doc:
-                pages = [page.get_text() for page in doc]
+                pages = [page.get_text() for page in doc]  # type: ignore[attr-defined]
             text = "\n\n".join(pages)
             if text.strip():
                 logger.debug(f"  PDF extracted via pymupdf: {len(text)} chars")
@@ -319,10 +337,13 @@ class TextDownloader:
           1. Use citation_details.url directly if already populated
           2. Use AcademicPaperFinder — iterates candidate URLs, tries each on 4xx failure
           3. Use institutional cookies on the landing page if configured
+          4. Retry previously-attempted URLs via Playwright browser (uses the
+             human-login session harvested at pipeline startup)
 
         The returned dict includes an ``attempts`` list — one entry per URL tried,
         tagged with the resolution phase (``direct`` / ``open_access`` /
-        ``institutional_cookies``) — so callers can persist the full cascade.
+        ``institutional_cookies`` / ``browser``) — so callers can persist the
+        full cascade.
         """
         attempts: list[dict] = []
 
@@ -395,7 +416,48 @@ class TextDownloader:
                     'error': 'fetch_with_cookies returned empty content',
                 })
 
-        err = last_error or 'No URL found via open-access APIs or institutional cookies'
+        # 4. Playwright browser fallback — retry each previously-attempted URL
+        # through the authenticated browser context. Because the orchestrator
+        # opens paywall domains for manual login before the pipeline starts and
+        # then bridges those cookies into both requests sessions and the browser
+        # context, ``download_url`` here fetches with the user's actual session.
+        # Capped at 5 URLs to avoid runaway retries on batches whose candidate
+        # list is long.
+        browser_searcher = getattr(self._paper_finder, "browser_searcher", None)
+        if browser_searcher is not None and attempts:
+            seen: set[str] = set()
+            tried = 0
+            for a in attempts[:]:  # snapshot — we append to attempts inside the loop
+                u = a.get("url")
+                if not u or u in seen:
+                    continue
+                seen.add(u)
+                if tried >= 5:
+                    break
+                tried += 1
+                logger.info(f"  Browser retry {tried}: {u}")
+                body = browser_searcher.download_url(u)
+                if not body:
+                    attempts.append({
+                        'url': u,
+                        'source': 'browser',
+                        'downloaded': False,
+                        'error': 'browser fetch returned no content',
+                    })
+                    continue
+                result = self._process_bytes(body, u, citation_id)
+                attempts.append({
+                    'url': u,
+                    'source': 'browser',
+                    'downloaded': bool(result.get('downloaded')),
+                    'error': result.get('error'),
+                })
+                if result['downloaded']:
+                    result['attempts'] = attempts
+                    result['winning_url'] = u
+                    return result
+
+        err = last_error or 'No URL found via open-access APIs, institutional cookies, or browser'
         return {
             'downloaded': False, 'format': None, 'path': None, 'text_content': None,
             'error': err, 'attempts': attempts, 'winning_url': None,

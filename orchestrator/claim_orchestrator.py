@@ -218,6 +218,75 @@ class ClaimOrchestrator:
         input()
         logger.info("User completed login — continuing pipeline")
 
+        # Bridge the just-authenticated Playwright cookies into every downstream
+        # HTTP client. Without this, the manual login would live only in the
+        # browser context — but almost all fetches happen through
+        # ``requests.Session`` objects that don't share cookies with Playwright.
+        # After this step, ``TextDownloader.download``,
+        # ``AcademicPaperFinder._session`` (OA API calls + fetch_with_cookies),
+        # and ``DatasetDownloader.download`` all send the user's session cookies
+        # transparently.
+        self._bridge_browser_cookies()
+
+    def _bridge_browser_cookies(self) -> None:
+        """
+        Harvest cookies from the authenticated Playwright browser context and
+        inject them into every ``requests.Session`` the pipeline uses, plus the
+        ``AcademicPaperFinder._inst_cookies`` dict so ``fetch_with_cookies`` can
+        find them by domain.
+
+        Called by ``_setup_browser_searcher`` immediately after the user
+        presses Enter to signal login completion.
+        """
+        if self.browser_searcher is None:
+            return
+        cookies = self.browser_searcher.export_cookies()
+        if not cookies:
+            logger.info("Browser context has no cookies to bridge — skipping")
+            return
+
+        sessions = [
+            self.text_downloader.session,
+            self.text_downloader._paper_finder._session,
+            self.dataset_downloader.session,
+        ]
+        applied = 0
+        for c in cookies:
+            name = c.get("name")
+            value = c.get("value")
+            if not name or value is None:
+                continue
+            domain = c.get("domain", "")
+            path = c.get("path", "/")
+            for session in sessions:
+                try:
+                    session.cookies.set(name, value, domain=domain, path=path)
+                except Exception:
+                    # requests can reject cookies with unusual attributes
+                    # (SameSite=None + no Secure, exotic paths). Skip silently
+                    # so one bad cookie doesn't break the whole bridge.
+                    continue
+            applied += 1
+
+        # Also merge into the AcademicPaperFinder's domain-keyed
+        # institutional-cookies dict so fetch_with_cookies() looks them up by
+        # netloc — Playwright's domain strings sometimes include a leading dot,
+        # but urlparse().netloc never does, so normalize.
+        inst = self.text_downloader._paper_finder._inst_cookies
+        for c in cookies:
+            name = c.get("name")
+            value = c.get("value")
+            domain = c.get("domain", "").lstrip(".")
+            if not name or value is None or not domain:
+                continue
+            inst.setdefault(domain, {})[name] = value
+
+        touched_domains = sorted({c.get("domain", "").lstrip(".") for c in cookies if c.get("domain")})
+        logger.info(
+            f"Bridged {applied} browser cookies into {len(sessions)} requests sessions "
+            f"and paper-finder inst_cookies (domains: {touched_domains})"
+        )
+
     def _process_uncited_qualitative(self, claims: List[ClaimObject]) -> List[ValidationResult]:
         """Process qualitative claims without citations: Truth Table + LLM Check"""
         results = []

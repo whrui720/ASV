@@ -53,6 +53,12 @@ class BrowserSearcher:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _require_context(self):
+        """Ensure the browser is started and return the (non-None) browser context."""
+        self._ensure_started()
+        assert self._context is not None
+        return self._context
+
     def _ensure_started(self) -> None:
         """Start the Playwright browser if it hasn't been started yet."""
         if self._browser is not None:
@@ -102,11 +108,11 @@ class BrowserSearcher:
         After calling this, the caller should prompt the user to complete login and
         press Enter before continuing.
         """
-        self._ensure_started()
+        context = self._require_context()
         for domain in domains:
             url = f"https://{domain}"
             try:
-                page = self._context.new_page()
+                page = context.new_page()
                 page.goto(url, timeout=BROWSER_SEARCH_TIMEOUT, wait_until="domcontentloaded")
                 logger.info(f"Opened login tab: {url}")
             except Exception as e:
@@ -150,8 +156,8 @@ class BrowserSearcher:
         Load a URL and return its visible text content.
         Returns None on failure (e.g. paywall, timeout, error).
         """
-        self._ensure_started()
-        page = self._context.new_page()
+        context = self._require_context()
+        page = context.new_page()
         try:
             page.goto(url, timeout=BROWSER_SEARCH_TIMEOUT, wait_until="domcontentloaded")
             text = page.inner_text("body")
@@ -163,13 +169,61 @@ class BrowserSearcher:
         finally:
             page.close()
 
+    def export_cookies(self) -> list[dict]:
+        """
+        Return all cookies currently stored in the browser context. Used by the
+        orchestrator after the human-login checkpoint to bridge the just-acquired
+        session into every ``requests.Session`` in the pipeline — closes the gap
+        between "user logged in via Playwright" and "downloads happen via requests".
+
+        Returns an empty list when the browser hasn't been started yet.
+        """
+        if self._context is None:
+            return []
+        try:
+            return [dict(c) for c in self._context.cookies()]
+        except Exception as e:
+            logger.warning(f"  export_cookies failed: {e}")
+            return []
+
+    def download_url(self, url: str, timeout_ms: Optional[int] = None) -> Optional[bytes]:
+        """
+        Fetch *url* via Playwright's ``APIRequestContext`` and return the raw body
+        as bytes. Because ``context.request`` shares storage state with the
+        browser context, any cookies the user set during manual login apply
+        automatically — this is what makes the login flow actually pay off at
+        download time.
+
+        Returns None on non-2xx responses, timeouts, or network errors. Callers
+        should treat the return value the same as a failed ``requests.get``.
+        """
+        context = self._require_context()
+        # Playwright timeouts are in milliseconds; default to the browser timeout
+        # (30s) which is a reasonable ceiling for a single publisher fetch.
+        timeout = timeout_ms if timeout_ms is not None else BROWSER_SEARCH_TIMEOUT
+        try:
+            resp = context.request.get(url, timeout=timeout)
+        except Exception as e:
+            logger.warning(f"  Playwright download failed for {url}: {e}")
+            return None
+        if not resp.ok:
+            logger.info(f"  Playwright download {url}: HTTP {resp.status}")
+            return None
+        try:
+            body = resp.body()
+        except Exception as e:
+            logger.warning(f"  Playwright response body read failed for {url}: {e}")
+            return None
+        logger.info(f"  ✓ Playwright download succeeded ({len(body)} bytes) from {url}")
+        return body
+
     def is_paywalled(self, url: str) -> bool:
         """
         Return True if the page appears to require login / subscription to read.
         Uses a lightweight heuristic: redirect to login URL or paywall keyword in body.
         """
-        self._ensure_started()
-        page = self._context.new_page()
+        context = self._require_context()
+        page = context.new_page()
         try:
             page.goto(url, timeout=BROWSER_SEARCH_TIMEOUT, wait_until="domcontentloaded")
             current_url = page.url.lower()
@@ -199,8 +253,8 @@ class BrowserSearcher:
         Navigate to a search results URL, extract candidate links, ask the LLM to
         rank them, and return the top_k most relevant URLs.
         """
-        self._ensure_started()
-        page = self._context.new_page()
+        context = self._require_context()
+        page = context.new_page()
         try:
             logger.info(f"  Browser searching {source_label}: {search_url}")
             page.goto(search_url, timeout=BROWSER_SEARCH_TIMEOUT, wait_until="domcontentloaded")
@@ -243,7 +297,7 @@ class BrowserSearcher:
         seen_urls = set()
 
         for a in soup.find_all("a", href=True):
-            href = a["href"].strip()
+            href = str(a["href"]).strip()
             if not href.startswith("http"):
                 continue
 

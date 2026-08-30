@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 
 import requests
 
@@ -12,6 +12,9 @@ from models import FoundDatasetSource
 from hybrid_citation_scraper.llm_client import LLMClient
 from run_paths import RunPaths
 from .config import DATA_GOV_API, KAGGLE_USERNAME, KAGGLE_KEY, DEFAULT_TOP_K, DOWNLOAD_TIMEOUT
+
+if TYPE_CHECKING:
+    from .browser_searcher import BrowserSearcher
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +25,7 @@ class DatasetFinder:
     def __init__(self, llm_client: LLMClient, run_paths: Optional[RunPaths] = None):
         self.llm_client = llm_client
         self.found_datasets: List[FoundDatasetSource] = []
-        self.browser_searcher = None  # injected by orchestrator after startup login
+        self.browser_searcher: Optional["BrowserSearcher"] = None  # injected by orchestrator after startup login
         self.run_paths = run_paths
 
     def save_discovery_records(self) -> Optional[Path]:
@@ -157,11 +160,14 @@ Return JSON: {{"can_reuse": true/false, "dataset_index": 1-{len(datasets)} or nu
 
     def _search_browser(self, query: str) -> List[Dict[str, Any]]:
         """Search Zenodo, Figshare, and HuggingFace Datasets via browser."""
+        browser = self.browser_searcher
+        if browser is None:
+            return []
         candidates = []
         sources = [
-            ("zenodo", self.browser_searcher.search_zenodo),
-            ("figshare", self.browser_searcher.search_figshare),
-            ("huggingface", self.browser_searcher.search_huggingface_datasets),
+            ("zenodo", browser.search_zenodo),
+            ("figshare", browser.search_figshare),
+            ("huggingface", browser.search_huggingface_datasets),
         ]
         for source_name, search_fn in sources:
             try:
@@ -222,11 +228,11 @@ Return JSON: {{"can_reuse": true/false, "dataset_index": 1-{len(datasets)} or nu
         candidates = []
         try:
             import kaggle  # noqa: F401 — triggers auth from env vars
-            from kaggle.api.kaggle_api_extended import KaggleApiExtended
-            api = KaggleApiExtended()
+            from kaggle.api.kaggle_api_extended import KaggleApi
+            api = KaggleApi()
             api.authenticate()
-            results = api.dataset_list(search=query, page_size=DEFAULT_TOP_K)
-            for item in results:
+            results = api.dataset_list(search=query)
+            for item in results[:DEFAULT_TOP_K]:
                 ref = getattr(item, "ref", None)
                 if ref:
                     candidates.append({
