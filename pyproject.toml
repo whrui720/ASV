@@ -1,0 +1,80 @@
+# pyproject.toml — canonical project metadata + dependency manifest.
+#
+# NOTE: the package layout below matches the current flat repo (top-level
+# modules + sibling packages). When the src/asv migration in docs/RESTRUCTURE.md
+# lands, replace the [tool.setuptools] section with a single `package-dir`/
+# `packages = ["asv"]` under src/. Until then, `requirements.txt` remains a
+# working mirror of [project.dependencies] for `pip install -r`.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asv"
+version = "0.1.0"
+description = "Automated Source Validation — validates claims in academic papers against their sources."
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    # PDF / text extraction
+    "PyMuPDF==1.25.1",
+    "pdfminer.six",
+    "pypdf>=3.0.0",
+    "PyPDF2>=3.0.0",
+    # LLM + NLP
+    "google-genai>=1.0.0",
+    "tiktoken>=0.5.0",
+    "spacy==3.8.4",
+    "langchain>=0.1.0",
+    "langchain-community>=0.0.20",
+    # data / scientific
+    "pandas==2.3.3",
+    "numpy>=1.24.0",
+    "scipy==1.15.3",
+    "scikit-learn>=1.3.0",
+    "openpyxl>=3.1.0",
+    # source finding / downloading
+    "kaggle==1.6.17",
+    "google-cloud-bigquery==3.30.0",
+    "rapidfuzz==3.11.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+    "playwright>=1.40.0",
+    # config
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    # web API
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.1",
+    "coverage>=7.2.7",
+    "pytest-html>=3.2.0",
+    "pytest-json-report>=1.5.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+# Flat-layout package map (current tree). See NOTE at top of file.
+[tool.setuptools]
+py-modules = ["models", "llm_config", "run_paths", "run_events", "interaction"]
+
+[tool.setuptools.packages.find]
+include = [
+    "hybrid_citation_scraper*",
+    "orchestrator*",
+    "sourcefinder*",
+    "validator*",
+    "api*",
+]
+
+# pytest configuration lives in pytest.ini (authoritative). When migrating to
+# src/asv, fold it into [tool.pytest.ini_options] here and delete pytest.ini.

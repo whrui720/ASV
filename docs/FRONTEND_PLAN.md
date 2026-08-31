@@ -1,6 +1,9 @@
 # ASV Frontend — Plan & Structure
 
-Status: proposal / not yet implemented.
+Status: **partially implemented** — the API (`api/`) and web frontend (`web/`) both exist and
+follow this spec; treat this document as the design reference (code comments cite it by section
+number), not as a to-do list. Sections still describe the intended end state; not every phase is
+complete.
 Scope: a web UI over the existing ASV pipeline (`scripts/run_pipeline.py` → `runs/{pdf_stem}__{timestamp}/`).
 
 ---
