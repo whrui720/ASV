@@ -121,6 +121,10 @@ Do NOT simply mark all claims as plausible. Be critical and evidence-based.
                 'confidence': float(response.get('confidence', 0.5)),
                 'explanation': response.get('explanation', 'No explanation provided'),
                 'supporting_quotes': response.get('supporting_quotes', []),
+                # B3: the retrieved chunks + similarity scores actually shown to
+                # the LLM, so the frontend's evidence pane (S4) can display what
+                # was retrieved even when the LLM's answer omits it.
+                'rag_chunks': relevant_chunks,
                 'error': None
             }
 
@@ -131,6 +135,7 @@ Do NOT simply mark all claims as plausible. Be critical and evidence-based.
                 'confidence': 0.0,
                 'explanation': f'LLM verification failed: {str(e)}',
                 'supporting_quotes': [],
+                'rag_chunks': relevant_chunks,
                 'error': str(e)
             }
 

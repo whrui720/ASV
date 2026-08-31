@@ -37,7 +37,9 @@ class ProcessQualitative:
                     passed=verification['passed'],
                     explanation=verification['explanation'],
                     sources_used=verification.get('supporting_quotes', []),
-                    errors=verification.get('error')
+                    errors=verification.get('error'),
+                    # B3: retrieved chunks + similarity scores for the evidence pane.
+                    validation_metadata={'rag_chunks': verification.get('rag_chunks', [])},
                 )
 
             # Fallback path requested by user: use non-RAG plausibility check when no source

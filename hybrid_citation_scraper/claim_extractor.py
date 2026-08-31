@@ -90,6 +90,7 @@ class HybridClaimExtractor:
         self.claims = []
         self.paper_title = None
         self.paper_abstract = None
+        self.full_text: Optional[str] = None
     
     def extract_citations(self, pdf_path: str) -> Dict[str, str]:
         """
@@ -266,7 +267,11 @@ class HybridClaimExtractor:
         
         # Extract text
         full_text = extract_text_from_pdf(pdf_path)
-        
+        # Persisted verbatim in save_results() (B2) — `location_in_text` offsets
+        # on each claim are character indices into this exact string, so the
+        # frontend's PDF-highlighting feature needs it saved alongside claims.
+        self.full_text = full_text
+
         # Extract title and abstract for context
         print("Extracting title and abstract...")
         paper_metadata = extract_title_and_abstract(full_text)
@@ -385,6 +390,17 @@ class HybridClaimExtractor:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
         print(f"✓ Results saved to {output_path}")
+
+        # B2: persist the extracted text alongside the claims JSON so
+        # `location_in_text` offsets are resolvable later (PDF highlighting,
+        # debugging extraction). Only possible when run_paths is given — the
+        # legacy output_path-only mode has no defined location for it.
+        if run_paths is not None and self.full_text:
+            text_path = run_paths.claims_text_path()
+            with open(text_path, 'w', encoding='utf-8') as f:
+                f.write(self.full_text)
+            print(f"✓ Extracted text saved to {text_path}")
+
         return output_path
     
     @staticmethod

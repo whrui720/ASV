@@ -31,6 +31,7 @@ class RunPaths:
     validation_results: Path
     final_output: Path
     logs: Path
+    control: Path
 
     @classmethod
     def for_pdf(
@@ -75,6 +76,7 @@ class RunPaths:
             validation_results=root / "validation_results",
             final_output=root / "final_output",
             logs=root / "logs",
+            control=root / "control",
         )
 
     def _ensure(self) -> None:
@@ -88,11 +90,17 @@ class RunPaths:
             self.validation_results,
             self.final_output,
             self.logs,
+            self.control,
         ):
             p.mkdir(parents=True, exist_ok=True)
 
     def claims_json(self) -> Path:
         return self.citations / f"{self.pdf_stem}_claims.json"
+
+    def claims_text_path(self) -> Path:
+        """Full extracted PDF text, persisted so `location_in_text` offsets are
+        resolvable later (frontend PDF highlighting, debugging extraction)."""
+        return self.citations / f"{self.pdf_stem}_text.txt"
 
     def found_datasets_json(self) -> Path:
         return self.sourcefinder / "found_datasets.json"
@@ -111,3 +119,17 @@ class RunPaths:
 
     def text_sources_manifest_json(self) -> Path:
         return self.text_sources / "_manifest.json"
+
+    def events_jsonl(self) -> Path:
+        """Machine-readable progress channel — one JSON object per line."""
+        return self.logs / "events.jsonl"
+
+    def login_ack_json(self) -> Path:
+        """Written by the API when the user confirms a paywall login is done."""
+        return self.control / "login_ack.json"
+
+    def status_json(self) -> Path:
+        """Run status (queued|running|awaiting_login|complete|failed), owned by
+        whichever process launched the run (job_manager for API-launched runs;
+        absent for CLI-launched runs, in which case status is inferred)."""
+        return self.root / "status.json"
