@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
@@ -28,9 +29,9 @@ CLAIM_ID = "test_finder_001"
 
 
 def main():
-    from hybrid_citation_scraper.llm_client import LLMClient
-    from sourcefinder.dataset_finder import DatasetFinder
-    from sourcefinder.dataset_downloader import DatasetDownloader
+    from asv.extraction.llm_client import LLMClient
+    from asv.sourcefinder.dataset_finder import DatasetFinder
+    from asv.sourcefinder.dataset_downloader import DatasetDownloader
 
     print("\n" + "=" * 60)
     print(" TEST: DatasetFinder + DatasetDownloader")

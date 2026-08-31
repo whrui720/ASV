@@ -18,10 +18,10 @@ from pathlib import Path
 
 def main():
     """Main test runner function"""
-        repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parent.parent
 
     parser = argparse.ArgumentParser(
-        description="Run tests for hybrid_citation_scraper",
+        description="Run tests for the asv package",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -88,7 +88,7 @@ Examples:
     # Add coverage
     if args.coverage:
         cmd.extend([
-            '--cov=hybrid_citation_scraper',
+            '--cov=asv',
             '--cov-report=term-missing'
         ])
         
@@ -108,14 +108,14 @@ Examples:
     
     # Add specific module
     if args.module:
-        test_file = f'hybrid_citation_scraper/tests/test_{args.module}.py'
+        test_file = f'src/asv/extraction/tests/test_{args.module}.py'
         if not (repo_root / test_file).exists():
             print(f"Error: Test file not found: {test_file}")
             print(f"Available modules: utils, llm_client, claim_extractor, config")
             return 1
         cmd.append(test_file)
     else:
-        cmd.append('hybrid_citation_scraper/tests/')
+        cmd.append('src/asv/extraction/tests/')
     
     # Print command
     print(f"Running: {' '.join(cmd)}")

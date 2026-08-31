@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_WEB_DIR = _PROJECT_ROOT / "web"
+_WEB_DIR = _PROJECT_ROOT / "apps" / "web"
 _DIST_DIR = _WEB_DIR / "dist"
 
 
@@ -37,11 +37,12 @@ def main() -> None:
     if not args.no_build and not _DIST_DIR.exists():
         _build_frontend()
 
-    sys.path.insert(0, str(_PROJECT_ROOT))
+    sys.path.insert(0, str(_PROJECT_ROOT / "src"))  # asv package
+    sys.path.insert(0, str(_PROJECT_ROOT))           # apps package
     import uvicorn
 
     print(f"[ASV] Starting backend on http://127.0.0.1:{args.port}")
-    uvicorn.run("api.main:app", host="127.0.0.1", port=args.port, reload=args.reload)
+    uvicorn.run("apps.api.main:app", host="127.0.0.1", port=args.port, reload=args.reload)
 
 
 if __name__ == "__main__":

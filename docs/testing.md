@@ -1,14 +1,15 @@
 # Testing
 
-The suite uses **pytest**. Tests live in `hybrid_citation_scraper/tests/` and `api/tests/`
+The suite uses **pytest**. Tests live in `src/asv/extraction/tests/` and `apps/api/tests/`
 (see `pytest.ini` for discovery config and markers).
 
 ## Install
 
 ```bash
+pip install -e ".[dev]"    # asv package + all test/dev tooling (canonical)
+# or, without the editable package:
 pip install -r requirements.txt
-pip install -r hybrid_citation_scraper/tests/test_requirements.txt
-# or, once packaged (see docs/RESTRUCTURE.md): pip install -e .[dev]
+pip install -r src/asv/extraction/tests/test_requirements.txt
 ```
 
 ## Run
@@ -18,7 +19,7 @@ pytest                     # everything
 pytest -m unit             # unit only
 pytest -m integration      # integration only
 pytest -m "not slow"       # skip slow
-pytest --cov=hybrid_citation_scraper --cov-report=term-missing --cov-report=html
+pytest --cov=asv --cov-report=term-missing --cov-report=html
 ```
 
 Script wrappers:
@@ -33,15 +34,17 @@ python scripts/run_tests.py --coverage --html-report
 Run a single file or test:
 
 ```bash
-pytest hybrid_citation_scraper/tests/test_utils.py
-pytest hybrid_citation_scraper/tests/test_claim_extractor.py::TestProcessPDF
+pytest src/asv/extraction/tests/test_utils.py
+pytest src/asv/extraction/tests/test_claim_extractor.py::TestProcessPDF
 ```
 
 ## Layout & markers
 
 - Unit tests: utilities, config, LLM client behavior.
 - Integration tests: end-to-end extraction workflow.
-- Shared fixtures: `hybrid_citation_scraper/tests/conftest.py`, `api/tests/conftest.py`.
+- Shared fixtures: `src/asv/extraction/tests/conftest.py`, `apps/api/tests/conftest.py`.
+  A repo-root `conftest.py` puts `src/` and the repo root on `sys.path` so `import asv`
+  and `import apps.api` resolve even without an editable install.
 - Markers: `unit`, `integration`, `slow`, `requires_api`.
 
 ## Notes
@@ -50,4 +53,4 @@ pytest hybrid_citation_scraper/tests/test_claim_extractor.py::TestProcessPDF
 - Coverage artifacts land in `htmlcov/` and `coverage.xml` (both gitignored).
 - Import errors usually mean you're not running from the repo root — `cd` to the root first.
 
-See also: `hybrid_citation_scraper/tests/README.md` for test-source specifics.
+See also: `src/asv/extraction/tests/README.md` for test-source specifics.

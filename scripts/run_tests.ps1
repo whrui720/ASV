@@ -31,7 +31,7 @@ if ($Verbose) {
 
 # Add coverage
 if ($Coverage) {
-    $cmd += "--cov=hybrid_citation_scraper"
+    $cmd += "--cov=asv"
     $cmd += "--cov-report=term-missing"
     
     if ($HtmlReport) {
@@ -58,7 +58,7 @@ if ($Parallel -gt 0) {
 
 # Add specific module
 if ($Module) {
-    $testFile = "hybrid_citation_scraper/tests/test_$Module.py"
+    $testFile = "src/asv/extraction/tests/test_$Module.py"
     if (-not (Test-Path $testFile)) {
         Write-Host "Error: Test file not found: $testFile" -ForegroundColor Red
         Write-Host "Available modules: utils, llm_client, claim_extractor, config, integration" -ForegroundColor Yellow
@@ -66,7 +66,7 @@ if ($Module) {
     }
     $cmd += $testFile
 } else {
-    $cmd += "hybrid_citation_scraper/tests/"
+    $cmd += "src/asv/extraction/tests/"
 }
 
 # Print command

@@ -1,6 +1,10 @@
 # ASV Repository Restructure Proposal
 
-Status: proposal. Nothing here has been applied yet — this is a target to migrate toward.
+Status: **IMPLEMENTED** (2026-08-31). The low-risk cleanup and the full `src/asv` +
+`apps/` migration described below have both landed; the test suite passes with the
+same results as before the move (no regressions). This document is kept as the
+rationale/reference for the layout. Sections describing the "before" state and the
+step order are historical.
 Date: 2026-08-31.
 
 ---

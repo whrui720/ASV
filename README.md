@@ -22,13 +22,13 @@ Given a body of text (academic paper, article, etc.), for each claim:
 ```
 ┌─────────────────────────────┐
 │  Stage 1: Claim Extraction  │
-│  (hybrid_citation_scraper)  │
+│     (asv.extraction)        │
 └─────────────┬───────────────┘
               │ ClaimObject[]
               ▼
 ┌─────────────────────────────┐
 │   Stage 2: Orchestration    │
-│       (validator)           │
+│    (asv.orchestrator)       │
 │  - Routes claims by type    │
 │  - Manages batch processing │
 │  - Calls sourcefinder tools │
@@ -37,13 +37,13 @@ Given a body of text (academic paper, article, etc.), for each claim:
               ▼
 ┌─────────────────────────────┐
 │   Stage 3: Utilities        │
-│   (sourcefinder)            │
+│    (asv.sourcefinder)       │
 │  - Find datasets/texts      │
 │  - Download sources         │
 └─────────────────────────────┘
 ```
 
-### Stage 1: Claim Extraction (`hybrid_citation_scraper/`)
+### Stage 1: Claim Extraction (`src/asv/extraction/`)
 
 **Purpose:** Extract claims and citations from research papers
 
@@ -65,7 +65,7 @@ Given a body of text (academic paper, article, etc.), for each claim:
 
 **Output:** List of `ClaimObject` with citation mapping
 
-### Stage 2: Orchestration (`orchestrator/`)
+### Stage 2: Orchestration (`src/asv/orchestrator/`)
 
 **Purpose:** Main orchestrator for claim validation
 
@@ -100,7 +100,7 @@ Given a body of text (academic paper, article, etc.), for each claim:
 - Tracks found datasets for reuse
 - Separate JSON outputs per claim type
 
-### Stage 3: Utilities (`sourcefinder/`)
+### Stage 3: Utilities (`src/asv/sourcefinder/`)
 
 **Purpose:** Tools for finding and downloading sources
 
@@ -197,9 +197,9 @@ This creates a fresh run folder at `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/` and wri
 ### Programmatic usage
 
 ```python
-from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-from orchestrator import ClaimOrchestrator
-from run_paths import RunPaths
+from asv.extraction.claim_extractor import HybridClaimExtractor
+from asv.orchestrator import ClaimOrchestrator
+from asv.core.run_paths import RunPaths
 
 # Set up the run folder
 run_paths = RunPaths.for_pdf("pdfs/research_paper.pdf")
@@ -241,23 +241,26 @@ qual_cited = results["qualitative_cited"]
 
 ```
 ASV/
+├── pyproject.toml                 # package metadata + dependencies (install: pip install -e .)
+├── requirements.txt               # runtime deps mirror (pip install -r)
+├── conftest.py                    # puts src/ + repo root on sys.path for tests
+├── README.md
+│
 ├── docs/                          # Project documentation
 │   ├── README.md
-│   └── testing/
-│       ├── README.md
-│       ├── INSTALLATION_AND_USAGE.md
-│       ├── TESTING_GUIDE.md
-│       └── TEST_SUITE_SUMMARY.md
+│   ├── QUICKSTART.md
+│   ├── testing.md
+│   ├── FRONTEND_PLAN.md           # web UI + API design spec (cited by §number in code)
+│   └── RESTRUCTURE.md             # this repo layout's rationale
 │
-├── scripts/                       # Entry points + utility scripts
-│   ├── README.md
+├── scripts/                       # CLI entry points (run from repo root)
 │   ├── run_pipeline.py            # ← canonical end-to-end entry point
 │   ├── run_orchestrator.py        # ← rerun orchestration on a claims JSON
-│   ├── run_tests.py
-│   └── run_tests.ps1
+│   ├── run_webapp.py              # build frontend + serve the API
+│   ├── run_tests.py / run_tests.ps1
+│   └── README.md
 │
 ├── pdfs/                          # Input PDFs (gitignored)
-│
 ├── runs/                          # Per-PDF output folders (gitignored)
 │   └── {pdf_stem}__{YYYYMMDD_HHMMSS}/
 │       ├── citations/             # {pdf_stem}_claims.json
@@ -269,42 +272,27 @@ ASV/
 │       ├── final_output/          # run_summary.json
 │       └── logs/                  # orchestration.log
 │
-├── hybrid_citation_scraper/       # Stage 1: Claim extraction
-│   ├── claim_extractor.py
-│   ├── llm_client.py
-│   ├── utils.py
-│   ├── config.py
-│   └── README.md
+├── src/asv/                       # the installable pipeline package
+│   ├── core/                      # shared across stages
+│   │   ├── models.py              # Pydantic data models
+│   │   ├── run_paths.py           # RunPaths dataclass — owns per-PDF layout
+│   │   ├── run_events.py          # events.jsonl progress channel
+│   │   ├── interaction.py         # paywall-login handoff seam
+│   │   └── llm_config.py          # Gemini API + task routing table
+│   ├── extraction/                # Stage 1: claim extraction (was hybrid_citation_scraper)
+│   │   ├── claim_extractor.py  llm_client.py  utils.py  config.py
+│   │   └── tests/                 # pytest suite
+│   ├── orchestrator/              # Stage 2: orchestration
+│   │   ├── claim_orchestrator.py  process_quantitative.py  process_qualitative.py
+│   ├── validator/                 # verification backends
+│   │   ├── truth_table_checker.py  llm_verifier.py  python_script_validator.py  config.py
+│   └── sourcefinder/              # Stage 3: source finding + downloading
+│       ├── dataset_finder.py  text_finder.py  academic_paper_finder.py
+│       ├── dataset_downloader.py  text_downloader.py  source_manifest.py  config.py
 │
-├── orchestrator/                  # Stage 2: Orchestration
-│   ├── claim_orchestrator.py      # Main orchestrator
-│   ├── process_quantitative.py
-│   ├── process_qualitative.py
-│   └── __init__.py
-│
-├── validator/                     # Validation tools
-│   ├── truth_table_checker.py
-│   ├── llm_verifier.py
-│   ├── python_script_validator.py
-│   ├── config.py
-│   ├── __init__.py
-│   └── README.md
-│
-├── sourcefinder/                  # Stage 3: Utilities
-│   ├── dataset_finder.py
-│   ├── text_finder.py
-│   ├── academic_paper_finder.py   # OA-URL resolution (Unpaywall / S2 / CrossRef)
-│   ├── dataset_downloader.py      # content-sniffing tabular downloader
-│   ├── text_downloader.py         # hardened PDF/HTML downloader + extractor
-│   ├── source_manifest.py         # per-batch resolution cascade logging
-│   ├── config.py
-│   └── README.md
-│
-├── run_paths.py                   # RunPaths dataclass — owns per-PDF layout
-├── models.py                      # Pydantic data models
-├── llm_config.py                  # Gemini API + task routing table
-├── requirements.txt
-└── README.md
+└── apps/                          # deployables that import `asv`
+    ├── api/                       # FastAPI service (routers/, services/, tests/)
+    └── web/                       # React + Vite frontend (gitignored: node_modules/, dist/)
 ```
 
 ## Dependencies
@@ -393,7 +381,7 @@ LLM_MODEL_STRONG=gemini-2.5-pro
 
 ### LLM Task Routing Table
 
-Configured in `llm_config.py` as `LLM_TASK_CONFIG`:
+Configured in `asv.core.llm_config.py` as `LLM_TASK_CONFIG`:
 
 | Task Key | Primary Use Case | Strength | Cost Tier | Default Model | Temperature |
 | --- | --- | --- | --- | --- | --- |
@@ -481,9 +469,9 @@ This order maximizes efficiency by:
 ## Contributing
 
 See module-specific READMEs:
-- [Claim Extraction](hybrid_citation_scraper/README.md)
-- [Validator](validator/README.md)
-- [Sourcefinder](sourcefinder/README.md)
+- [Claim Extraction](src/asv/extraction/README.md)
+- [Validator](src/asv/validator/README.md)
+- [Sourcefinder](src/asv/sourcefinder/README.md)
 
 ## License
 

@@ -24,13 +24,15 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(_ROOT))
 
-from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-from orchestrator import ClaimOrchestrator
-from run_paths import RunPaths
-from run_events import RunEventLogger
-from interaction import FileInteractionHandler
+from asv.extraction.claim_extractor import HybridClaimExtractor
+from asv.orchestrator import ClaimOrchestrator
+from asv.core.run_paths import RunPaths
+from asv.core.run_events import RunEventLogger
+from asv.core.interaction import FileInteractionHandler
 
 
 def main():

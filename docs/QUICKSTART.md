@@ -28,9 +28,9 @@ This creates a fresh `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/` folder and writes eve
 ### Programmatic usage
 
 ```python
-from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-from orchestrator import ClaimOrchestrator
-from run_paths import RunPaths
+from asv.extraction.claim_extractor import HybridClaimExtractor
+from asv.orchestrator import ClaimOrchestrator
+from asv.core.run_paths import RunPaths
 
 run_paths = RunPaths.for_pdf("pdfs/research_paper.pdf")
 
@@ -58,8 +58,8 @@ python scripts/run_orchestrator.py runs/research_paper__20260101_120000/citation
 Programmatic equivalent:
 
 ```python
-from orchestrator import ClaimOrchestrator
-from run_paths import RunPaths
+from asv.orchestrator import ClaimOrchestrator
+from asv.core.run_paths import RunPaths
 
 run_paths = RunPaths.from_existing("runs/research_paper__20260101_120000")
 orchestrator = ClaimOrchestrator(run_paths=run_paths)
@@ -149,7 +149,7 @@ for batch in results["quantitative_cited"]:
 
 ### Adjust Validation Thresholds
 
-Edit `validator/config.py`:
+Edit `src/asv/validator/config.py`:
 ```python
 TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.8       # Lower = more lenient
 LLM_VERIFIER_CONFIDENCE_THRESHOLD = 0.8
@@ -169,7 +169,7 @@ LLM_MAX_RETRIES = 3
 
 ### Adjust Claim Extraction
 
-Edit `hybrid_citation_scraper/config.py`:
+Edit `src/asv/extraction/config.py`:
 ```python
 CHUNK_SIZE = 800     # Larger = fewer API calls but less precise
 CHUNK_OVERLAP = 100  # Overlap between chunks
@@ -177,14 +177,14 @@ CHUNK_OVERLAP = 100  # Overlap between chunks
 
 ### Adjust Source Finding / Downloading
 
-Edit `sourcefinder/config.py`:
+Edit `src/asv/sourcefinder/config.py`:
 ```python
 DATASET_REUSE_THRESHOLD = 0.75  # Higher = less dataset reuse
 DOWNLOAD_TIMEOUT = 60           # Seconds
 MAX_FILE_SIZE_MB = 500
 ```
 
-Edit `sourcefinder/text_downloader.py`:
+Edit `src/asv/sourcefinder/text_downloader.py`:
 ```python
 _MIN_USABLE_TEXT_CHARS = 200  # Min non-whitespace extracted chars to accept a download
 ```
@@ -207,7 +207,7 @@ pip install scikit-learn
 ### "Dataset download failed"
 - Check the citation URL is valid
 - Check network connection
-- Check timeout settings in `sourcefinder/config.py`
+- Check timeout settings in `src/asv/sourcefinder/config.py`
 
 ### "URL is not tabular data (detected: application/pdf)"
 `DatasetDownloader` explicitly rejects non-tabular payloads. This is normal — the orchestrator's cascade will move to the next candidate URL. If every candidate for a batch is a PDF, the batch is genuinely paper-backed (not dataset-backed); if the batch is quantitative cited, it will be routed through `_process_paper_backed_quant` (RAG) instead of the strict script-validator path.
@@ -221,7 +221,7 @@ pip install scikit-learn
 If the orchestrator iterates through every candidate and every one fails this way, the batch's `download_successful=False` — the source is genuinely inaccessible in open form.
 
 ### Paywalled sources — using the Playwright login flow
-When any `KNOWN_PAYWALL_DOMAINS` (see `sourcefinder/config.py`) appear in the citations, the orchestrator opens a visible Chromium window with a tab per domain at startup and prints:
+When any `KNOWN_PAYWALL_DOMAINS` (see `src/asv/sourcefinder/config.py`) appear in the citations, the orchestrator opens a visible Chromium window with a tab per domain at startup and prints:
 
 ```
 [ASV] Please log in to the following sites in the browser window:
@@ -235,13 +235,13 @@ Log in normally in each tab (SSO, institutional proxy, whatever your library use
 3. Mirrors them into `AcademicPaperFinder._inst_cookies` by domain so `fetch_with_cookies()` finds them.
 4. If a fetch still fails, `download_with_resolution` step 4 retries each attempted URL through `BrowserSearcher.download_url()`, which uses Playwright's `APIRequestContext` (shares storage state with the browser — closest thing to a real navigation).
 
-Requires `BROWSER_HEADLESS = False` in `sourcefinder/config.py` (the default). For CI/headless usage, populate `INSTITUTIONAL_COOKIES` in `.env` instead — same effect without the manual login prompt.
+Requires `BROWSER_HEADLESS = False` in `src/asv/sourcefinder/config.py` (the default). For CI/headless usage, populate `INSTITUTIONAL_COOKIES` in `.env` instead — same effect without the manual login prompt.
 
 ### "No relevant chunks found in source"
-The RAG retriever found nothing above `RAG_SIMILARITY_THRESHOLD` in the downloaded text. Try lowering the threshold in `validator/config.py`. Common when the paper text is very long (many low-similarity chunks) or when the claim uses different terminology than the source.
+The RAG retriever found nothing above `RAG_SIMILARITY_THRESHOLD` in the downloaded text. Try lowering the threshold in `src/asv/validator/config.py`. Common when the paper text is very long (many low-similarity chunks) or when the claim uses different terminology than the source.
 
 ### "Script execution timeout"
-Increase timeout in `validator/config.py`:
+Increase timeout in `src/asv/validator/config.py`:
 ```python
 SCRIPT_TIMEOUT_SECONDS = 60  # Increase from 30 to 60
 ```
@@ -258,9 +258,9 @@ results = orchestrator.process_claims(subset, citations)
 
 ### Example 1: Process Single Paper
 ```python
-from hybrid_citation_scraper.claim_extractor import HybridClaimExtractor
-from orchestrator import ClaimOrchestrator
-from run_paths import RunPaths
+from asv.extraction.claim_extractor import HybridClaimExtractor
+from asv.orchestrator import ClaimOrchestrator
+from asv.core.run_paths import RunPaths
 
 run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
 
@@ -280,7 +280,7 @@ print(f"Qualitative uncited: {passed}/{total} passed")
 
 ### Example 2: Filter Only Quantitative Claims
 ```python
-from run_paths import RunPaths
+from asv.core.run_paths import RunPaths
 
 run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
 extractor = HybridClaimExtractor()
@@ -296,7 +296,7 @@ results = orchestrator.process_claims(quant_claims, citations)
 
 ### Example 3: Custom Validation Pipeline
 ```python
-from validator import TruthTableChecker, LLMVerifier
+from asv.validator import TruthTableChecker, LLMVerifier
 
 # Use individual validators
 truth_checker = TruthTableChecker()
@@ -336,7 +336,7 @@ for claim in claims:
 ## Support
 
 See module-specific documentation:
-- [Claim Extraction](hybrid_citation_scraper/README.md)
-- [Orchestrator](orchestrator/README.md)
-- [Validator](validator/README.md)
-- [Sourcefinder](sourcefinder/README.md)
+- [Claim Extraction](src/asv/extraction/README.md)
+- [Orchestrator](src/asv/orchestrator/README.md)
+- [Validator](src/asv/validator/README.md)
+- [Sourcefinder](src/asv/sourcefinder/README.md)

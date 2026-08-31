@@ -10,7 +10,7 @@ Project documentation (non-code, cross-module).
 
 ## Module docs
 
-- `../hybrid_citation_scraper/README.md`
-- `../orchestrator/README.md`
-- `../validator/README.md`
-- `../sourcefinder/README.md`
+- `../src/asv/extraction/README.md`
+- `../src/asv/orchestrator/README.md`
+- `../src/asv/validator/README.md`
+- `../src/asv/sourcefinder/README.md`

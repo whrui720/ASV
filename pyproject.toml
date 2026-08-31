@@ -1,10 +1,8 @@
 # pyproject.toml — canonical project metadata + dependency manifest.
 #
-# NOTE: the package layout below matches the current flat repo (top-level
-# modules + sibling packages). When the src/asv migration in docs/RESTRUCTURE.md
-# lands, replace the [tool.setuptools] section with a single `package-dir`/
-# `packages = ["asv"]` under src/. Until then, `requirements.txt` remains a
-# working mirror of [project.dependencies] for `pip install -r`.
+# The importable library is `asv` under src/ (src layout). The `apps/` directory
+# (FastAPI api, React web) is deployable code that imports `asv`; it is not
+# packaged. `requirements.txt` mirrors [project.dependencies] for `pip install -r`.
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -63,18 +61,9 @@ dev = [
     "pytest-asyncio>=0.21.0",
 ]
 
-# Flat-layout package map (current tree). See NOTE at top of file.
-[tool.setuptools]
-py-modules = ["models", "llm_config", "run_paths", "run_events", "interaction"]
-
+# src layout: the `asv` package lives under src/.
 [tool.setuptools.packages.find]
-include = [
-    "hybrid_citation_scraper*",
-    "orchestrator*",
-    "sourcefinder*",
-    "validator*",
-    "api*",
-]
+where = ["src"]
+include = ["asv*"]
 
-# pytest configuration lives in pytest.ini (authoritative). When migrating to
-# src/asv, fold it into [tool.pytest.ini_options] here and delete pytest.ini.
+# pytest configuration lives in pytest.ini (authoritative).

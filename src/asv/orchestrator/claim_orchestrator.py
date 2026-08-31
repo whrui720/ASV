@@ -1,0 +1,1063 @@
+"""Claim Orchestrator - Main orchestration pipeline for claim validation"""
+
+import json
+import logging
+import os
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
+from collections import defaultdict
+
+from asv.core.models import (
+    ClaimObject, ValidationResult, ValidationBatch, CitationDetails,
+    ResolutionAttempt, SourceManifestEntry,
+)
+from asv.extraction.llm_client import LLMClient
+from asv.core.run_paths import RunPaths
+from asv.core.run_events import RunEventLogger
+from asv.core.interaction import InteractionHandler, ConsoleInteractionHandler
+from asv.sourcefinder import DatasetFinder, TextFinder, DatasetDownloader, TextDownloader
+from asv.sourcefinder.browser_searcher import BrowserSearcher
+from asv.sourcefinder.config import KNOWN_PAYWALL_DOMAINS
+from asv.sourcefinder.source_manifest import SourceManifest
+from asv.validator.truth_table_checker import TruthTableChecker
+from asv.validator.llm_verifier import LLMVerifier
+from .process_quantitative import ProcessQuantitative
+from .process_qualitative import ProcessQualitative
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# B4: opt-in retention of downloaded dataset/text-source files. Off by
+# default — the pipeline deletes them post-batch to conserve disk (see
+# CLAUDE.md). Set ASV_KEEP_SOURCES=1 to keep them so the web UI's claim-detail
+# view (S4) can show the actual retrieved source instead of just its manifest.
+_KEEP_SOURCES = os.getenv("ASV_KEEP_SOURCES", "").strip().lower() in ("1", "true", "yes")
+
+
+def _setup_file_logging(log_path: Path) -> Path:
+    """Add a file handler writing to ``log_path`` to the root logger."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(file_handler)
+    return log_path
+
+
+class ClaimOrchestrator:
+    """Main orchestrator for claim validation"""
+
+    def __init__(self, run_paths: RunPaths, interaction: Optional[InteractionHandler] = None):
+        self.run_paths = run_paths
+        self.output_dir = run_paths.validation_results
+
+        self._log_path = _setup_file_logging(run_paths.orchestration_log())
+        logger.info(f"Orchestrator initialised. Run folder: {run_paths.root}")
+        logger.info(f"Log file: {self._log_path}")
+
+        # Machine-readable progress channel (logs/events.jsonl) — always on,
+        # for both CLI and API-driven runs. See run_events.py / B1.
+        self.events = RunEventLogger(run_paths)
+
+        # Paywall-login checkpoint. Defaults to the CLI's original print+input
+        # behavior; the web backend injects FileInteractionHandler instead.
+        self.interaction: InteractionHandler = interaction or ConsoleInteractionHandler()
+
+        # Initialize LLM client
+        self.llm_client = LLMClient()
+
+        # Initialize tool validators
+        self.truth_table = TruthTableChecker()
+        self.llm_verifier = LLMVerifier(self.llm_client)
+
+        # Initialize process orchestrators
+        self.quant_processor = ProcessQuantitative(self.llm_client, run_paths=run_paths)
+        self.qual_processor = ProcessQualitative(self.llm_client)
+
+        # Initialize sourcefinder tools
+        self.dataset_finder = DatasetFinder(llm_client=self.llm_client, run_paths=run_paths)
+        self.text_finder = TextFinder(llm_client=self.llm_client, run_paths=run_paths)
+        self.dataset_downloader = DatasetDownloader(run_paths=run_paths)
+        self.text_downloader = TextDownloader(run_paths=run_paths, llm_client=self.llm_client)
+
+        # Persistent per-folder manifests — survive batch cleanup so a run
+        # remains auditable after datasets/text_sources files are deleted.
+        self.dataset_manifest = SourceManifest(
+            run_paths.datasets_manifest_json(), run_paths.pdf_stem
+        )
+        self.text_source_manifest = SourceManifest(
+            run_paths.text_sources_manifest_json(), run_paths.pdf_stem
+        )
+
+        # Citations dict populated when claims are loaded from JSON
+        self.citations_dict: Dict[str, str] = {}
+
+        # Browser searcher — created lazily in _setup_browser_searcher()
+        self.browser_searcher: BrowserSearcher = None
+
+    def process_claims(
+        self, claims: List[ClaimObject], citations: Dict[str, str] = None
+    ) -> Dict[str, Any]:
+        """
+        Main processing pipeline following the specified order.
+        Returns validation results grouped by claim type.
+
+        Args:
+            claims: sorted list of ClaimObject from the extractor
+            citations: dict mapping citation_id -> full bibliography text,
+                       used for open-access resolution of cited sources
+        """
+        if citations:
+            self.citations_dict = citations
+
+        self._setup_browser_searcher(claims, citations or {})
+
+        run_start = time.time()
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Starting validation of {len(claims)} claims")
+        logger.info(f"{'='*60}\n")
+        self.events.emit("run_started", total_claims=len(claims))
+
+        results = {
+            "qualitative_uncited": [],
+            "quantitative_uncited": [],
+            "qualitative_cited": [],
+            "quantitative_cited": []
+        }
+        step_timings: Dict[str, float] = {}
+
+        # Step 1: Qualitative without citation
+        logger.info("Step 1: Processing qualitative claims without citations...")
+        qual_uncited = [c for c in claims if c.claim_type == "qualitative" and not c.citation_id]
+        self.events.emit("step_started", step="qualitative_uncited", count=len(qual_uncited))
+        t0 = time.time()
+        results["qualitative_uncited"] = self._process_uncited_qualitative(qual_uncited)
+        step_timings["qualitative_uncited"] = round(time.time() - t0, 2)
+        self.events.emit("step_finished", step="qualitative_uncited", elapsed_seconds=step_timings["qualitative_uncited"])
+
+        # Step 2: Quantitative without citation.
+        # Splits into (a) claims with a dataset source found — routed to Step 4, and
+        # (b) terminal direct_results (truth-table/LLM verified OR no source found) —
+        # written directly to quantitative_uncited_results.json.
+        logger.info("\nStep 2: Processing quantitative claims without citations...")
+        quant_uncited = [c for c in claims if c.claim_type == "quantitative" and not c.citation_id]
+        self.events.emit("step_started", step="quantitative_uncited", count=len(quant_uncited))
+        t0 = time.time()
+        quant_with_found_sources, quant_uncited_direct_results = \
+            self._process_uncited_quantitative(quant_uncited)
+        results["quantitative_uncited"] = quant_uncited_direct_results
+        step_timings["quantitative_uncited"] = round(time.time() - t0, 2)
+        self.events.emit("step_finished", step="quantitative_uncited", elapsed_seconds=step_timings["quantitative_uncited"])
+
+        # Step 3: Qualitative with citation (matches README ordering: qual cited before quant cited)
+        logger.info("\nStep 3: Processing qualitative claims with citations...")
+        qual_cited = [c for c in claims if c.claim_type == "qualitative" and c.citation_id]
+        self.events.emit("step_started", step="qualitative_cited", count=len(qual_cited))
+        t0 = time.time()
+        results["qualitative_cited"] = self._process_cited_qualitative(qual_cited)
+        step_timings["qualitative_cited"] = round(time.time() - t0, 2)
+        self.events.emit("step_finished", step="qualitative_cited", elapsed_seconds=step_timings["qualitative_cited"])
+
+        # Step 4: Combine originally-uncited-now-cited + originally-cited quantitative.
+        # quant_with_found_sources already only contains claims that resolved a dataset.
+        logger.info("\nStep 4: Processing quantitative claims with citations...")
+        quant_cited = [c for c in claims if c.claim_type == "quantitative" and c.citation_id]
+        all_quant_cited = quant_with_found_sources + quant_cited
+        self.events.emit("step_started", step="quantitative_cited", count=len(all_quant_cited))
+        t0 = time.time()
+        results["quantitative_cited"] = self._process_cited_quantitative(all_quant_cited)
+        step_timings["quantitative_cited"] = round(time.time() - t0, 2)
+        self.events.emit("step_finished", step="quantitative_cited", elapsed_seconds=step_timings["quantitative_cited"])
+
+        # Save results and summary
+        self._save_results(results)
+        self._save_run_summary(claims, results, step_timings, run_start)
+
+        # Persist sourcefinder discovery records (in-memory across run)
+        dataset_records_path = self.dataset_finder.save_discovery_records()
+        if dataset_records_path is not None:
+            logger.info(f"✓ Dataset discovery records saved to: {dataset_records_path}")
+        text_records_path = self.text_finder.save_discovery_records()
+        if text_records_path is not None:
+            logger.info(f"✓ Text source discovery records saved to: {text_records_path}")
+
+        # Clean up browser if it was started
+        if self.browser_searcher is not None:
+            self.browser_searcher.close()
+            self.browser_searcher = None
+
+        total_elapsed = round(time.time() - run_start, 2)
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Validation complete! Total time: {total_elapsed}s")
+        logger.info(f"Log file: {self._log_path}")
+        logger.info(f"{'='*60}\n")
+        self.events.emit("run_finished", total_elapsed_seconds=total_elapsed)
+
+        return results
+
+    def _setup_browser_searcher(
+        self, claims: List[ClaimObject], citations: Dict[str, str]
+    ) -> None:
+        """
+        Start a BrowserSearcher and — if any cited sources are behind known paywalls —
+        open those domains in the browser so the user can log in manually before
+        the pipeline begins processing.
+
+        After this method returns, self.browser_searcher is set and injected into all
+        finders that support it.
+        """
+        self.browser_searcher = BrowserSearcher(llm_client=self.llm_client)
+
+        # Inject into all finders so they use the same authenticated browser session
+        self.dataset_finder.browser_searcher = self.browser_searcher
+        self.text_finder.browser_searcher = self.browser_searcher
+        self.text_downloader._paper_finder.browser_searcher = self.browser_searcher
+
+        # Detect which paywall domains appear in the citation text or claim URLs
+        all_text = " ".join(citations.values())
+        for claim in claims:
+            if claim.citation_details and claim.citation_details.url:
+                all_text += " " + claim.citation_details.url
+
+        paywall_domains_needed = [
+            domain for domain in KNOWN_PAYWALL_DOMAINS
+            if domain in all_text.lower()
+        ]
+
+        if not paywall_domains_needed:
+            logger.info("No known paywall domains detected in citations — browser ready (no login needed)")
+            return
+
+        logger.info(
+            f"Paywall domains detected in citations: {paywall_domains_needed}\n"
+            "Opening browser tabs for manual login..."
+        )
+        self.browser_searcher.open_domains(paywall_domains_needed)
+        # Replaces the pipeline's original bare print()/input() — the default
+        # ConsoleInteractionHandler behaves identically for the CLI; the web
+        # backend injects FileInteractionHandler instead (see interaction.py, B6).
+        self.interaction.await_login(paywall_domains_needed)
+
+        # Bridge the just-authenticated Playwright cookies into every downstream
+        # HTTP client. Without this, the manual login would live only in the
+        # browser context — but almost all fetches happen through
+        # ``requests.Session`` objects that don't share cookies with Playwright.
+        # After this step, ``TextDownloader.download``,
+        # ``AcademicPaperFinder._session`` (OA API calls + fetch_with_cookies),
+        # and ``DatasetDownloader.download`` all send the user's session cookies
+        # transparently.
+        self._bridge_browser_cookies()
+
+    def _bridge_browser_cookies(self) -> None:
+        """
+        Harvest cookies from the authenticated Playwright browser context and
+        inject them into every ``requests.Session`` the pipeline uses, plus the
+        ``AcademicPaperFinder._inst_cookies`` dict so ``fetch_with_cookies`` can
+        find them by domain.
+
+        Called by ``_setup_browser_searcher`` immediately after the user
+        presses Enter to signal login completion.
+        """
+        if self.browser_searcher is None:
+            return
+        cookies = self.browser_searcher.export_cookies()
+        if not cookies:
+            logger.info("Browser context has no cookies to bridge — skipping")
+            return
+
+        sessions = [
+            self.text_downloader.session,
+            self.text_downloader._paper_finder._session,
+            self.dataset_downloader.session,
+        ]
+        applied = 0
+        for c in cookies:
+            name = c.get("name")
+            value = c.get("value")
+            if not name or value is None:
+                continue
+            domain = c.get("domain", "")
+            path = c.get("path", "/")
+            for session in sessions:
+                try:
+                    session.cookies.set(name, value, domain=domain, path=path)
+                except Exception:
+                    # requests can reject cookies with unusual attributes
+                    # (SameSite=None + no Secure, exotic paths). Skip silently
+                    # so one bad cookie doesn't break the whole bridge.
+                    continue
+            applied += 1
+
+        # Also merge into the AcademicPaperFinder's domain-keyed
+        # institutional-cookies dict so fetch_with_cookies() looks them up by
+        # netloc — Playwright's domain strings sometimes include a leading dot,
+        # but urlparse().netloc never does, so normalize.
+        inst = self.text_downloader._paper_finder._inst_cookies
+        for c in cookies:
+            name = c.get("name")
+            value = c.get("value")
+            domain = c.get("domain", "").lstrip(".")
+            if not name or value is None or not domain:
+                continue
+            inst.setdefault(domain, {})[name] = value
+
+        touched_domains = sorted({c.get("domain", "").lstrip(".") for c in cookies if c.get("domain")})
+        logger.info(
+            f"Bridged {applied} browser cookies into {len(sessions)} requests sessions "
+            f"and paper-finder inst_cookies (domains: {touched_domains})"
+        )
+
+    def _process_uncited_qualitative(self, claims: List[ClaimObject]) -> List[ValidationResult]:
+        """Process qualitative claims without citations: Truth Table + LLM Check"""
+        results = []
+
+        for claim in claims:
+            logger.info(f"  Validating: {claim.claim_id}")
+
+            tt_result = self.truth_table.check_claim(claim.text)
+            llm_result = self.llm_verifier.verify_claim(claim.text)
+
+            passed = tt_result['found'] or llm_result['plausible']
+            confidence = max(tt_result['confidence'], llm_result['confidence'])
+
+            explanation = f"Truth Table: {tt_result['explanation']}. LLM Check: {llm_result['reasoning']}"
+
+            validation = ValidationResult(
+                claim_id=claim.claim_id,
+                claim_type=claim.claim_type,
+                originally_uncited=False,
+                validated=True,
+                validation_method="truth_table+llm_check",
+                confidence=confidence,
+                passed=passed,
+                explanation=explanation,
+                sources_used=tt_result.get('sources', [])
+            )
+            results.append(validation)
+
+            logger.info(f"    Result: {'PASSED' if passed else 'FAILED'} (confidence: {confidence:.2f})")
+            self.events.emit("claim_validated", claim_id=claim.claim_id, passed=passed, confidence=confidence)
+
+        return results
+
+    def _process_uncited_quantitative(
+        self, claims: List[ClaimObject]
+    ) -> Tuple[List[ClaimObject], List[ValidationResult]]:
+        """
+        Process quantitative claims without citations.
+        - Truth Table + LLM Check
+        - If not sufficiently answered, use sourcefinder
+
+        Returns:
+          - claims_to_route: only claims where a dataset source was found —
+            these proceed to Step 4 batch validation with citation_id="found_{claim_id}".
+          - direct_results: ValidationResults for the two terminal branches that
+            do NOT proceed further (truth-table/LLM verified, and no-dataset-found).
+            These land directly in quantitative_uncited_results.json.
+        """
+        claims_to_route: List[ClaimObject] = []
+        direct_results: List[ValidationResult] = []
+
+        for claim in claims:
+            logger.info(f"  Processing: {claim.claim_id}")
+
+            tt_result = self.truth_table.check_claim(claim.text)
+            llm_result = self.llm_verifier.verify_claim(claim.text)
+
+            # Branch A: Truth-table / LLM strongly verified — no dataset needed.
+            if (tt_result['found'] and tt_result['confidence'] > 0.8) or \
+               (llm_result['plausible'] and llm_result['confidence'] > 0.8):
+                logger.info("    Claim verified by truth table/LLM, skipping sourcefinder")
+                passed = tt_result['found'] or llm_result['plausible']
+                confidence = max(tt_result['confidence'], llm_result['confidence'])
+                explanation = (
+                    f"Truth Table: {tt_result['explanation']}. "
+                    f"LLM Check: {llm_result['reasoning']}"
+                )
+                direct_results.append(ValidationResult(
+                    claim_id=claim.claim_id,
+                    claim_type=claim.claim_type,
+                    originally_uncited=False,
+                    validated=True,
+                    validation_method="truth_table+llm_only",
+                    confidence=confidence,
+                    passed=passed,
+                    explanation=explanation,
+                    sources_used=tt_result.get('sources', []),
+                ))
+                logger.info(f"    Result: {'PASSED' if passed else 'FAILED'} (confidence: {confidence:.2f})")
+                self.events.emit("claim_validated", claim_id=claim.claim_id, passed=passed, confidence=confidence)
+                continue
+
+            # Branch B: Try sourcefinder.
+            logger.info("    Searching for dataset...")
+            found_source = self.dataset_finder.find_dataset(claim.text, claim.claim_id)
+
+            if found_source:
+                claim.originally_uncited = True
+                claim.found_source = found_source
+                claim.citation_found = True
+                claim.citation_id = f"found_{claim.claim_id}"
+                claim.citation_text = f"[Found: {found_source.source_type}]"
+                claim.citation_details = CitationDetails(
+                    title=f"Dataset from {found_source.source_type}",
+                    authors=None,
+                    year=None,
+                    url=found_source.source_url,
+                    doi=None,
+                    raw_text=f"Found dataset: {found_source.source_url}"
+                )
+                logger.info(f"    ✓ Found dataset: {found_source.source_url}")
+                claims_to_route.append(claim)
+            else:
+                logger.warning("    ✗ No dataset found for claim")
+                direct_results.append(ValidationResult(
+                    claim_id=claim.claim_id,
+                    claim_type=claim.claim_type,
+                    originally_uncited=True,
+                    validated=False,
+                    validation_method="source_not_found",
+                    confidence=0.0,
+                    passed=False,
+                    explanation="No dataset source could be located for this uncited quantitative claim.",
+                    sources_used=[],
+                ))
+                self.events.emit("claim_validated", claim_id=claim.claim_id, passed=False, confidence=0.0)
+
+        return claims_to_route, direct_results
+
+    def _process_cited_quantitative(self, claims: List[ClaimObject]) -> List[ValidationBatch]:
+        """
+        Route cited-quantitative claims by source shape.
+
+        A claim's ``found_source`` is set only when ``_process_uncited_quantitative``
+        located a real dataset via ``DatasetFinder`` (data.gov, Kaggle, Zenodo, etc.).
+        Those claims carry a genuine tabular URL and go through the strict
+        ``DatasetDownloader → PythonScriptValidator`` path.
+
+        Every other cited-quant claim carries a citation to an *academic paper*.
+        Papers rarely publish raw data at the citation URL — the numbers live in
+        the prose. Route those through the text-source pipeline (same as the
+        cited-qualitative flow) so a paper's PDF/HTML can be RAG-searched by the
+        LLM verifier.
+        """
+        dataset_backed = [c for c in claims if c.found_source is not None]
+        paper_backed = [c for c in claims if c.found_source is None]
+
+        logger.info(
+            f"  Routing quant-cited claims: "
+            f"{len(dataset_backed)} dataset-backed, {len(paper_backed)} paper-backed"
+        )
+
+        results: List[ValidationBatch] = []
+        if dataset_backed:
+            results.extend(self._process_dataset_backed_quant(dataset_backed))
+        if paper_backed:
+            results.extend(self._process_paper_backed_quant(paper_backed))
+        return results
+
+    def _process_dataset_backed_quant(
+        self, claims: List[ClaimObject]
+    ) -> List[ValidationBatch]:
+        """Strict dataset flow: download tabular data, run generated Python script."""
+        batches = defaultdict(list)
+        for claim in claims:
+            batches[claim.citation_id].append(claim)
+
+        batch_results = []
+
+        for citation_id, claims_group in batches.items():
+            logger.info(f"  [dataset] Batch [{citation_id}]: {len(claims_group)} claims")
+            self.events.emit(
+                "batch_started", step="quantitative_cited",
+                citation_id=str(citation_id), num_claims=len(claims_group),
+            )
+            first_claim = claims_group[0]
+
+            # Resolve URL: use known URL → open-access candidates → iterate on 4xx.
+            # Each candidate is tagged with its resolution phase so the manifest
+            # can preserve the full cascade after the batch cleans up.
+            candidates: list[tuple[str, str]] = []  # (url, source_label)
+            if first_claim.citation_details and first_claim.citation_details.url:
+                # Uncited-quant claims that resolved to a dataset arrive here with
+                # citation_details.url populated from FoundDatasetSource — tag
+                # accordingly so the manifest can distinguish them.
+                label = 'found_dataset' if first_claim.found_source else 'direct'
+                candidates.append((first_claim.citation_details.url, label))
+            raw_citation_text = self.citations_dict.get(str(citation_id), "")
+            if raw_citation_text:
+                for u in self.text_downloader._paper_finder.find_urls(raw_citation_text):
+                    if u not in [c[0] for c in candidates]:
+                        candidates.append((u, 'open_access'))
+
+            attempts: list[ResolutionAttempt] = []
+            download_result = {'downloaded': False, 'error': 'No URL found via open-access APIs'}
+            winning_url: str | None = None
+            for i, (url, source_label) in enumerate(candidates, 1):
+                logger.info(f"    Attempt {i}/{len(candidates)}: {url}")
+                download_result = self.dataset_downloader.download(url, citation_id)
+                attempts.append(ResolutionAttempt(
+                    url=url,
+                    source=source_label,
+                    downloaded=bool(download_result.get('downloaded')),
+                    error=download_result.get('error'),
+                ))
+                self.events.emit(
+                    "resolution_attempt", citation_id=str(citation_id), url=url,
+                    source=source_label, downloaded=bool(download_result.get('downloaded')),
+                )
+                if download_result['downloaded']:
+                    winning_url = url
+                    break
+
+            downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
+            manifest_entry = SourceManifestEntry(
+                citation_id=str(citation_id),
+                citation_text=first_claim.citation_text,
+                raw_citation_text=raw_citation_text or None,
+                citation_details=first_claim.citation_details,
+                resolution_attempts=attempts,
+                winning_url=winning_url,
+                format=download_result.get('format'),
+                filename=Path(download_result['path']).name if download_result.get('path') else None,
+                downloaded_at=downloaded_at,
+                batch_num_claims=len(claims_group),
+                batch_download_successful=bool(download_result.get('downloaded')),
+                found_source=first_claim.found_source,
+            )
+            self.dataset_manifest.append(manifest_entry)
+
+            if not download_result['downloaded']:
+                logger.error(f"    ✗ Download failed: {download_result.get('error')}")
+                claim_results = []
+                for claim in claims_group:
+                    claim_results.append(
+                        ValidationResult(
+                            claim_id=claim.claim_id,
+                            claim_type=claim.claim_type,
+                            originally_uncited=claim.originally_uncited,
+                            validated=False,
+                            validation_method="python_script",
+                            confidence=0.0,
+                            passed=False,
+                            explanation="Batch failed: dataset download unsuccessful",
+                            sources_used=[],
+                            errors=download_result.get('error')
+                        )
+                    )
+
+                batch_results.append(
+                    ValidationBatch(
+                        citation_id=citation_id,
+                        citation_text=first_claim.citation_text,
+                        download_successful=False,
+                        source_path=None,
+                        source_url=None,
+                        resolution_attempts=attempts,
+                        claim_results=claim_results,
+                        batch_notes=f"Download failed: {download_result.get('error')}"
+                    )
+                )
+                self.events.emit(
+                    "batch_finished", citation_id=str(citation_id), download_successful=False,
+                    num_claims=len(claims_group),
+                )
+                continue
+
+            logger.info(f"    ✓ Downloaded dataset: {download_result['path']}")
+
+            claim_results = []
+            for claim in claims_group:
+                logger.info(f"      Validating: {claim.claim_id}")
+                result = self.quant_processor.validate_claim(claim, download_result['path'])
+                claim_results.append(result)
+                logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
+                self.events.emit(
+                    "claim_validated", claim_id=claim.claim_id,
+                    passed=result.passed, confidence=result.confidence,
+                )
+
+            if not _KEEP_SOURCES:
+                delete_result = self.dataset_downloader.delete_dataset(Path(download_result['path']).name)
+                if delete_result['deleted']:
+                    logger.info(f"    ✓ Deleted dataset to conserve memory: {download_result['path']}")
+                    self.dataset_manifest.mark_deleted(str(citation_id))
+                else:
+                    logger.warning(f"    ⚠ Failed to delete dataset: {delete_result.get('error')}")
+            else:
+                logger.info(f"    ASV_KEEP_SOURCES set — retaining dataset: {download_result['path']}")
+
+            batch_results.append(
+                ValidationBatch(
+                    citation_id=citation_id,
+                    citation_text=first_claim.citation_text,
+                    download_successful=True,
+                    source_path=download_result['path'],
+                    source_url=winning_url,
+                    resolution_attempts=attempts,
+                    claim_results=claim_results,
+                    batch_notes=f"Successfully validated {len(claim_results)} claims"
+                )
+            )
+            self.events.emit(
+                "batch_finished", citation_id=str(citation_id), download_successful=True,
+                num_claims=len(claims_group),
+            )
+
+        return batch_results
+
+    def _process_paper_backed_quant(
+        self, claims: List[ClaimObject]
+    ) -> List[ValidationBatch]:
+        """
+        Paper-text flow for cited-quantitative claims.
+
+        Mirrors ``_process_cited_qualitative`` — downloads the paper via
+        ``TextDownloader.download_with_resolution`` and verifies each claim
+        against the paper text via the qualitative RAG + LLM path. The result
+        preserves ``claim_type="quantitative"`` on every ValidationResult (the
+        qual_processor forwards ``claim.claim_type`` verbatim) so consumers can
+        still segment quant vs. qual downstream.
+        """
+        batches = defaultdict(list)
+        for claim in claims:
+            batches[claim.citation_id].append(claim)
+
+        batch_results = []
+
+        for citation_id, claims_group in batches.items():
+            logger.info(f"  [paper] Batch [{citation_id}]: {len(claims_group)} claims")
+            self.events.emit(
+                "batch_started", step="quantitative_cited",
+                citation_id=str(citation_id), num_claims=len(claims_group),
+            )
+            first_claim = claims_group[0]
+
+            raw_citation_text = self.citations_dict.get(str(citation_id), "")
+            download_result = self.text_downloader.download_with_resolution(
+                first_claim.citation_details, citation_id, raw_citation_text
+            )
+
+            attempts = [
+                ResolutionAttempt(**a) for a in download_result.get('attempts', [])
+            ]
+            winning_url = download_result.get('winning_url')
+            for a in attempts:
+                self.events.emit(
+                    "resolution_attempt", citation_id=str(citation_id), url=a.url,
+                    source=a.source, downloaded=a.downloaded,
+                )
+
+            downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
+            manifest_entry = SourceManifestEntry(
+                citation_id=str(citation_id),
+                citation_text=first_claim.citation_text,
+                raw_citation_text=raw_citation_text or None,
+                citation_details=first_claim.citation_details,
+                resolution_attempts=attempts,
+                winning_url=winning_url,
+                format=download_result.get('format'),
+                filename=Path(download_result['path']).name if download_result.get('path') else None,
+                downloaded_at=downloaded_at,
+                batch_num_claims=len(claims_group),
+                batch_download_successful=bool(download_result.get('downloaded')),
+            )
+            self.text_source_manifest.append(manifest_entry)
+
+            if not download_result['downloaded']:
+                logger.error(f"    ✗ Download failed: {download_result.get('error')}")
+                claim_results = []
+                for claim in claims_group:
+                    claim_results.append(
+                        ValidationResult(
+                            claim_id=claim.claim_id,
+                            claim_type=claim.claim_type,
+                            originally_uncited=claim.originally_uncited,
+                            validated=False,
+                            validation_method="rag_search",
+                            confidence=0.0,
+                            passed=False,
+                            explanation="Batch failed: text source download unsuccessful",
+                            sources_used=[],
+                            errors=download_result.get('error')
+                        )
+                    )
+
+                batch_results.append(
+                    ValidationBatch(
+                        citation_id=citation_id,
+                        citation_text=first_claim.citation_text,
+                        download_successful=False,
+                        source_path=None,
+                        source_url=None,
+                        resolution_attempts=attempts,
+                        claim_results=claim_results,
+                        batch_notes=f"Download failed: {download_result.get('error')}"
+                    )
+                )
+                self.events.emit(
+                    "batch_finished", citation_id=str(citation_id), download_successful=False,
+                    num_claims=len(claims_group),
+                )
+                continue
+
+            logger.info(f"    ✓ Downloaded text: {download_result['path']}")
+
+            claim_results = []
+            for claim in claims_group:
+                logger.info(f"      Validating: {claim.claim_id}")
+                result = self.qual_processor.validate_claim(claim, download_result.get('text_content'))
+                claim_results.append(result)
+                logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
+                self.events.emit(
+                    "claim_validated", claim_id=claim.claim_id,
+                    passed=result.passed, confidence=result.confidence,
+                )
+
+            if not _KEEP_SOURCES:
+                delete_result = self.text_downloader.delete_text(Path(download_result['path']).name)
+                if delete_result['deleted']:
+                    logger.info(f"    ✓ Deleted text file to conserve memory: {download_result['path']}")
+                    self.text_source_manifest.mark_deleted(str(citation_id))
+                else:
+                    logger.warning(f"    ⚠ Failed to delete text file: {delete_result.get('error')}")
+            else:
+                logger.info(f"    ASV_KEEP_SOURCES set — retaining text source: {download_result['path']}")
+
+            batch_results.append(
+                ValidationBatch(
+                    citation_id=citation_id,
+                    citation_text=first_claim.citation_text,
+                    download_successful=True,
+                    source_path=download_result['path'],
+                    source_url=winning_url,
+                    resolution_attempts=attempts,
+                    claim_results=claim_results,
+                    batch_notes=f"Successfully validated {len(claim_results)} claims (paper-text)"
+                )
+            )
+            self.events.emit(
+                "batch_finished", citation_id=str(citation_id), download_successful=True,
+                num_claims=len(claims_group),
+            )
+
+        return batch_results
+
+    def _process_cited_qualitative(self, claims: List[ClaimObject]) -> List[ValidationBatch]:
+        """Process cited qualitative claims in citation batches."""
+        batches = defaultdict(list)
+        for claim in claims:
+            batches[claim.citation_id].append(claim)
+
+        batch_results = []
+
+        for citation_id, claims_group in batches.items():
+            logger.info(f"  Batch [{citation_id}]: {len(claims_group)} claims")
+            self.events.emit(
+                "batch_started", step="qualitative_cited",
+                citation_id=str(citation_id), num_claims=len(claims_group),
+            )
+            first_claim = claims_group[0]
+
+            raw_citation_text = self.citations_dict.get(str(citation_id), "")
+            download_result = self.text_downloader.download_with_resolution(
+                first_claim.citation_details, citation_id, raw_citation_text
+            )
+
+            attempts = [
+                ResolutionAttempt(**a) for a in download_result.get('attempts', [])
+            ]
+            winning_url = download_result.get('winning_url')
+            for a in attempts:
+                self.events.emit(
+                    "resolution_attempt", citation_id=str(citation_id), url=a.url,
+                    source=a.source, downloaded=a.downloaded,
+                )
+
+            downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
+            manifest_entry = SourceManifestEntry(
+                citation_id=str(citation_id),
+                citation_text=first_claim.citation_text,
+                raw_citation_text=raw_citation_text or None,
+                citation_details=first_claim.citation_details,
+                resolution_attempts=attempts,
+                winning_url=winning_url,
+                format=download_result.get('format'),
+                filename=Path(download_result['path']).name if download_result.get('path') else None,
+                downloaded_at=downloaded_at,
+                batch_num_claims=len(claims_group),
+                batch_download_successful=bool(download_result.get('downloaded')),
+            )
+            self.text_source_manifest.append(manifest_entry)
+
+            if not download_result['downloaded']:
+                logger.error(f"    ✗ Download failed: {download_result.get('error')}")
+                claim_results = []
+                for claim in claims_group:
+                    claim_results.append(
+                        ValidationResult(
+                            claim_id=claim.claim_id,
+                            claim_type=claim.claim_type,
+                            originally_uncited=claim.originally_uncited,
+                            validated=False,
+                            validation_method="rag_search",
+                            confidence=0.0,
+                            passed=False,
+                            explanation="Batch failed: text source download unsuccessful",
+                            sources_used=[],
+                            errors=download_result.get('error')
+                        )
+                    )
+
+                batch_results.append(
+                    ValidationBatch(
+                        citation_id=citation_id,
+                        citation_text=first_claim.citation_text,
+                        download_successful=False,
+                        source_path=None,
+                        source_url=None,
+                        resolution_attempts=attempts,
+                        claim_results=claim_results,
+                        batch_notes=f"Download failed: {download_result.get('error')}"
+                    )
+                )
+                self.events.emit(
+                    "batch_finished", citation_id=str(citation_id), download_successful=False,
+                    num_claims=len(claims_group),
+                )
+                continue
+
+            logger.info(f"    ✓ Downloaded text: {download_result['path']}")
+
+            claim_results = []
+            for claim in claims_group:
+                logger.info(f"      Validating: {claim.claim_id}")
+                result = self.qual_processor.validate_claim(claim, download_result.get('text_content'))
+                claim_results.append(result)
+                logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
+                self.events.emit(
+                    "claim_validated", claim_id=claim.claim_id,
+                    passed=result.passed, confidence=result.confidence,
+                )
+
+            if not _KEEP_SOURCES:
+                delete_result = self.text_downloader.delete_text(Path(download_result['path']).name)
+                if delete_result['deleted']:
+                    logger.info(f"    ✓ Deleted text file to conserve memory: {download_result['path']}")
+                    self.text_source_manifest.mark_deleted(str(citation_id))
+                else:
+                    logger.warning(f"    ⚠ Failed to delete text file: {delete_result.get('error')}")
+            else:
+                logger.info(f"    ASV_KEEP_SOURCES set — retaining text source: {download_result['path']}")
+
+            batch_results.append(
+                ValidationBatch(
+                    citation_id=citation_id,
+                    citation_text=first_claim.citation_text,
+                    download_successful=True,
+                    source_path=download_result['path'],
+                    source_url=winning_url,
+                    resolution_attempts=attempts,
+                    claim_results=claim_results,
+                    batch_notes=f"Successfully validated {len(claim_results)} claims"
+                )
+            )
+            self.events.emit(
+                "batch_finished", citation_id=str(citation_id), download_successful=True,
+                num_claims=len(claims_group),
+            )
+
+        return batch_results
+
+    def _save_run_summary(
+        self,
+        claims: List[ClaimObject],
+        results: Dict[str, Any],
+        step_timings: Dict[str, float],
+        run_start: float,
+    ) -> None:
+        """Save a structured JSON summary of the run for quick inspection."""
+
+        def _result_stats(result_list):
+            if not result_list:
+                return {"count": 0, "passed": 0, "failed": 0, "avg_confidence": None}
+            passed = failed = 0
+            confidences = []
+            for r in result_list:
+                # ValidationBatch: look at claim_results inside
+                if isinstance(r, ValidationBatch):
+                    for cr in r.claim_results:
+                        if cr.passed:
+                            passed += 1
+                        else:
+                            failed += 1
+                        confidences.append(cr.confidence)
+                elif isinstance(r, ValidationResult):
+                    if r.passed:
+                        passed += 1
+                    else:
+                        failed += 1
+                    confidences.append(r.confidence)
+            avg_conf = round(sum(confidences) / len(confidences), 3) if confidences else None
+            return {"count": passed + failed, "passed": passed, "failed": failed, "avg_confidence": avg_conf}
+
+        total_elapsed = round(time.time() - run_start, 2)
+        # B7: surface accumulated LLM cost/token usage on the run summary so
+        # the frontend can show a cost column without parsing logs.
+        try:
+            cost = self.llm_client.get_cost_summary()
+        except Exception as e:
+            logger.warning(f"Could not compute cost summary: {e}")
+            cost = None
+        summary = {
+            "run_timestamp": datetime.now().isoformat(),
+            "log_file": str(self._log_path),
+            "total_elapsed_seconds": total_elapsed,
+            "cost": cost,
+            "input": {
+                "total_claims": len(claims),
+                "qualitative_uncited": sum(1 for c in claims if c.claim_type == "qualitative" and not c.citation_id),
+                "quantitative_uncited": sum(1 for c in claims if c.claim_type == "quantitative" and not c.citation_id),
+                "qualitative_cited": sum(1 for c in claims if c.claim_type == "qualitative" and c.citation_id),
+                "quantitative_cited": sum(1 for c in claims if c.claim_type == "quantitative" and c.citation_id),
+            },
+            "steps": {
+                step: {
+                    "elapsed_seconds": step_timings.get(step),
+                    **_result_stats(results.get(step, [])),
+                }
+                for step in ["qualitative_uncited", "quantitative_uncited", "qualitative_cited", "quantitative_cited"]
+            },
+        }
+
+        summary_path = self.run_paths.run_summary_json()
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        logger.info(f"✓ Run summary saved to: {summary_path}")
+
+    def _save_results(self, results: Dict[str, Any]) -> None:
+        """Save results to separate JSON files by claim type."""
+        for claim_type, validation_results in results.items():
+            output_path = self.output_dir / f"{claim_type}_results.json"
+
+            serialized_results = []
+            for result in validation_results:
+                if isinstance(result, ValidationBatch):
+                    serialized_results.append(result.model_dump())
+                elif isinstance(result, ValidationResult):
+                    serialized_results.append(result.model_dump())
+                else:
+                    serialized_results.append(result)
+
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(serialized_results, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"✓ Saved {claim_type} results to: {output_path}")
+
+    def revalidate_citation(
+        self,
+        citation_id: str,
+        claims_json_path: str,
+        override_url: Optional[str] = None,
+    ) -> Optional[ValidationBatch]:
+        """
+        Re-run validation for exactly the claims sharing ``citation_id`` — used
+        by the web backend's "retry this citation" action (S3/S6) after a
+        human supplies a working URL or fixes access, so a bad source doesn't
+        require re-running the entire pipeline (B5).
+
+        Reloads claims from ``claims_json_path`` (the citation_id → claims
+        mapping is fixed at extraction time and doesn't change across a run),
+        re-downloads/re-validates just that batch, and splices the result back
+        into the appropriate ``validation_results/*_cited_results.json`` file
+        on disk so subsequent reads of the run folder reflect the retry.
+
+        Returns the produced ``ValidationBatch``, or ``None`` if the citation
+        matched no claims.
+        """
+        claims, citations = self.load_claims_from_json(claims_json_path)
+        self.citations_dict = citations
+        group = [c for c in claims if c.citation_id == citation_id]
+        if not group:
+            raise ValueError(f"No claims found for citation_id={citation_id!r}")
+
+        if override_url:
+            for c in group:
+                existing = c.citation_details
+                c.citation_details = CitationDetails(
+                    title=existing.title if existing else None,
+                    authors=existing.authors if existing else None,
+                    year=existing.year if existing else None,
+                    url=override_url,
+                    doi=existing.doi if existing else None,
+                    raw_text=(existing.raw_text if existing else None)
+                    or self.citations_dict.get(citation_id, override_url),
+                )
+
+        first = group[0]
+        if first.claim_type == "quantitative" and first.found_source is not None:
+            batches = self._process_dataset_backed_quant(group)
+        elif first.claim_type == "quantitative":
+            batches = self._process_paper_backed_quant(group)
+        else:
+            batches = self._process_cited_qualitative(group)
+
+        batch = batches[0] if batches else None
+        if batch is not None:
+            self._merge_retry_into_results(batch)
+        return batch
+
+    def _merge_retry_into_results(self, batch: ValidationBatch) -> None:
+        """Splice a retried batch back into its results JSON file on disk,
+        replacing the stale entry for the same citation_id (or appending if
+        this citation had no prior entry, e.g. a claim originally routed
+        elsewhere)."""
+        claim_type = batch.claim_results[0].claim_type if batch.claim_results else "qualitative"
+        filename = (
+            "qualitative_cited_results.json" if claim_type == "qualitative"
+            else "quantitative_cited_results.json"
+        )
+        path = self.output_dir / filename
+        existing: list = []
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+
+        replaced = False
+        for i, entry in enumerate(existing):
+            if entry.get("citation_id") == batch.citation_id:
+                existing[i] = batch.model_dump()
+                replaced = True
+                break
+        if not replaced:
+            existing.append(batch.model_dump())
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2, ensure_ascii=False)
+        logger.info(f"✓ Retry result for citation [{batch.citation_id}] merged into {path}")
+
+    @staticmethod
+    def load_claims_from_json(json_path: str):
+        """
+        Load claims and citations from a JSON file produced by HybridClaimExtractor.
+        The JSON is expected to have a top-level "claims" key and a "citations" key.
+        Claims are returned in the order they appear in the file (already sorted by
+        the extractor: qual_uncited → quant_uncited → qual_cited → quant_cited).
+
+        Returns:
+            Tuple[List[ClaimObject], Dict[str, str]] — claims and citations dict
+        """
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        claims = [ClaimObject(**c) for c in data["claims"]]
+        citations = data.get("citations", {})
+        logger.info(f"Loaded {len(claims)} claims and {len(citations)} citations from {json_path}")
+        return claims, citations
+
+
+# Alias for backwards compatibility / README examples
+ClaimValidator = ClaimOrchestrator

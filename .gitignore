@@ -149,7 +149,7 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
-# Frontend (web/)
-web/node_modules/
-web/dist/
-api/openapi.json
+# Frontend (apps/web/) + API-generated artifacts
+apps/web/node_modules/
+apps/web/dist/
+apps/api/openapi.json

@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
@@ -49,7 +50,7 @@ CLAIMS = [
 
 def download_dataset():
     """Download Iris CSV; return local path."""
-    from sourcefinder.dataset_downloader import DatasetDownloader
+    from asv.sourcefinder.dataset_downloader import DatasetDownloader
 
     logger.info("─" * 50)
     logger.info("SETUP  Downloading Iris CSV for validation tests")
@@ -65,8 +66,8 @@ def download_dataset():
 
 
 def main():
-    from hybrid_citation_scraper.llm_client import LLMClient
-    from validator.python_script_validator import PythonScriptValidator
+    from asv.extraction.llm_client import LLMClient
+    from asv.validator.python_script_validator import PythonScriptValidator
 
     print("\n" + "=" * 60)
     print(" TEST: PythonScriptValidator")
