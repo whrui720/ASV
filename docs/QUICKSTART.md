@@ -67,6 +67,49 @@ claims, citations = ClaimOrchestrator.load_claims_from_json(str(run_paths.claims
 results = orchestrator.process_claims(claims, citations)
 ```
 
+## Run the Web UI Locally
+
+The frontend (`apps/web/`) reads run data written by the pipeline above, so generate at least one run first (e.g. `python scripts/run_pipeline.py pdfs/hsv_cancer.pdf`).
+
+### Option A: Dev mode (hot reload, recommended while iterating)
+
+Two terminals:
+
+```bash
+# Terminal 1 — backend on :8000
+uvicorn apps.api.main:app --reload --port 8000
+```
+
+```bash
+# Terminal 2 — frontend on :5173
+cd apps/web
+npm install      # first time only
+npm run dev
+```
+
+Open **http://localhost:5173** — Vite proxies `/api/*` to the backend on `:8000` (see `apps/web/vite.config.ts`).
+
+### Option B: One-process mode (closer to prod)
+
+Builds the frontend once, then a single FastAPI process serves both the API and the static bundle:
+
+```bash
+python scripts/run_webapp.py --reload
+```
+
+Open **http://localhost:8000**. Use `--no-build` to skip rebuilding if `apps/web/dist/` already exists, or `--port` to change the port.
+
+### Sanity check
+
+```bash
+curl http://127.0.0.1:8000/api/health   # -> {"ok": true}
+```
+
+If `apps/web`'s API types drift from the backend, regenerate them (backend must be running on `:8000`):
+```bash
+cd apps/web && npm run gen-types
+```
+
 ## Output Files
 
 After validation, the run folder `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/` contains 4 JSON files under `validation_results/`:
