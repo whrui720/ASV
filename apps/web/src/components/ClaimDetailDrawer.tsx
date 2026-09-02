@@ -26,8 +26,14 @@ export function ClaimDetailDrawer() {
   const [pane, setPane] = useState<Pane | null>(null);
   const activePane = pane ?? defaultPane;
 
+  // Path-relative so the drawer returns to whichever parent opened it —
+  // the claims explorer or the paper view.
   function close() {
-    navigate(`/runs/${runId}/claims`);
+    navigate("..", { relative: "path" });
+  }
+
+  function openClaim(id: string) {
+    navigate(`../${encodeURIComponent(id)}`, { relative: "path" });
   }
 
   return (
@@ -148,7 +154,7 @@ export function ClaimDetailDrawer() {
                     <li key={s.claim_id}>
                       <button
                         className="text-sm text-indigo-700 hover:underline text-left"
-                        onClick={() => navigate(`/runs/${runId}/claims/${encodeURIComponent(s.claim_id)}`)}
+                        onClick={() => openClaim(s.claim_id)}
                       >
                         {s.text.slice(0, 80)}
                       </button>

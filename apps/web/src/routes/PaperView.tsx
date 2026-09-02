@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Outlet, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -10,6 +10,13 @@ import { VERDICT_DOT } from "../lib/verdict";
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const PAGE_WIDTH = 760;
+// The claims endpoint caps page_size at 500 (apps/api/routers/claims.py); asking
+// for more 422s and leaves this view with no verdicts at all.
+const CLAIMS_PAGE_SIZE = 500;
+// pdf.js paints its selectable text layer at z-index 2 and the annotation layer
+// at 3, so an un-layered overlay is click-through-proof: the text spans swallow
+// every click. Sit above both.
+const HIGHLIGHT_Z = 4;
 
 // S5: the original PDF with claim spans highlighted, colored by verdict.
 // `location_in_text` offsets don't map 1:1 to PDF coordinates (C5) — the
@@ -27,7 +34,7 @@ export function PaperView() {
   });
   const { data: claimsPage } = useQuery({
     queryKey: ["claims-for-paper", runId],
-    queryFn: () => api.listClaims(runId!, { page: 1, page_size: 1000 }),
+    queryFn: () => api.listClaims(runId!, { page: 1, page_size: CLAIMS_PAGE_SIZE }),
     enabled: !!runId,
   });
 
@@ -65,7 +72,7 @@ export function PaperView() {
                     <div
                       key={`${h!.claim_id}-${qi}`}
                       title={h!.claim_id}
-                      onClick={() => navigate(`/runs/${runId}/claims/${encodeURIComponent(h!.claim_id)}`)}
+                      onClick={() => navigate(encodeURIComponent(h!.claim_id))}
                       className="absolute cursor-pointer"
                       style={{
                         left: `${q[0] * 100}%`,
@@ -75,6 +82,7 @@ export function PaperView() {
                         backgroundColor: color,
                         opacity: 0.28,
                         mixBlendMode: "multiply",
+                        zIndex: HIGHLIGHT_Z,
                       }}
                     />
                   );
@@ -93,7 +101,7 @@ export function PaperView() {
             .map((c) => (
               <button
                 key={c.claim_id}
-                onClick={() => navigate(`/runs/${runId}/claims/${encodeURIComponent(c.claim_id)}`)}
+                onClick={() => navigate(encodeURIComponent(c.claim_id))}
                 className="block w-full text-left text-xs p-2 rounded border hover:bg-gray-50"
               >
                 <span
@@ -105,6 +113,7 @@ export function PaperView() {
             ))}
         </div>
       </aside>
+      <Outlet />
     </div>
   );
 }

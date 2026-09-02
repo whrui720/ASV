@@ -21,9 +21,11 @@ export default function App() {
         <Route path="runs/:runId/claims" element={<ClaimsExplorer />}>
           <Route path=":claimId" element={<ClaimDetailDrawer />} />
         </Route>
-        <Route path="runs/:runId/paper" element={<PaperView />} />
-        {/* Clicking a highlight in PaperView navigates to the claims-explorer
-            drawer route above, rather than nesting a duplicate drawer here. */}
+        {/* The same drawer nests under both parents so a highlight click opens
+            it in place, without kicking the reader out of the PDF. */}
+        <Route path="runs/:runId/paper" element={<PaperView />}>
+          <Route path=":claimId" element={<ClaimDetailDrawer />} />
+        </Route>
         <Route path="runs/:runId/sources" element={<SourcesView />} />
         <Route path="runs/:runId/console" element={<LiveConsole />} />
       </Route>
