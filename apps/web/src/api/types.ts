@@ -61,6 +61,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List References
+         * @description Tier 0.6 bibliography audit: every reference in the paper, whether it was
+         *     found in the free indexes, and whether it has been retracted.
+         *
+         *     Empty for runs made before the audit existed.
+         */
+        get: operations["list_references_api_runs__run_id__references_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/events": {
         parameters: {
             query?: never;
@@ -234,6 +257,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/benchmark/{name}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stats */
+        get: operations["stats_api_benchmark__name__stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmark/{name}/pairs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pairs
+         * @description Pairs to work through.
+         *
+         *     ``needs_second_pass`` surfaces already-labelled pairs for a *different*
+         *     annotator, which is how the >=20% double-annotated overlap gets built.
+         */
+        get: operations["list_pairs_api_benchmark__name__pairs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmark/{name}/pairs/{pair_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pair */
+        get: operations["get_pair_api_benchmark__name__pairs__pair_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmark/{name}/label": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Label Pair */
+        post: operations["label_pair_api_benchmark__name__label_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmark/{name}/adjudicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adjudicate
+         * @description Settle a disagreement between two annotators.
+         *
+         *     The adjudicated label becomes ``final_label``; both original labels are
+         *     kept, so kappa still reflects the raw disagreement rather than the
+         *     tidied-up version.
+         */
+        post: operations["adjudicate_api_benchmark__name__adjudicate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/benchmark/{name}/disagreements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Disagreements */
+        get: operations["disagreements_api_benchmark__name__disagreements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -255,18 +393,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdjudicateRequest */
+        AdjudicateRequest: {
+            /** Pair Id */
+            pair_id: string;
+            adjudicated_label: components["schemas"]["Verdict"];
+            /** Adjudicated By */
+            adjudicated_by: string;
+        };
         /** BatchRef */
         BatchRef: {
             /** Citation Id */
             citation_id: string;
             /** Download Successful */
             download_successful: boolean;
+            /**
+             * Judgeable
+             * @default false
+             */
+            judgeable: boolean;
+            content_quality?: components["schemas"]["ContentQuality"] | null;
             /** Winning Url */
             winning_url?: string | null;
             /** Format */
             format?: string | null;
             /** Resolution Attempts */
             resolution_attempts?: components["schemas"]["ResolutionAttempt"][];
+            reference_check?: components["schemas"]["ReferenceCheck"] | null;
             /** Notes */
             notes: string;
             /** Sibling Claim Ids */
@@ -394,12 +547,10 @@ export interface components {
             claim_id: string;
             /** Text */
             text: string;
-            /** A Verdict */
-            a_verdict?: ("passed" | "failed" | "unresolved_source" | "skipped") | null;
+            a_verdict?: components["schemas"]["Verdict"] | null;
             /** A Confidence */
             a_confidence?: number | null;
-            /** B Verdict */
-            b_verdict?: ("passed" | "failed" | "unresolved_source" | "skipped") | null;
+            b_verdict?: components["schemas"]["Verdict"] | null;
             /** B Confidence */
             b_confidence?: number | null;
             /**
@@ -419,6 +570,16 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * ContentQuality
+         * @description How good the fetched source text is as evidence — Tier 0.3.
+         *
+         *     A successful HTTP fetch is necessary but not sufficient. Publisher landing
+         *     pages (abstract + reference list) clear any length floor and then get
+         *     RAG-searched for evidence they cannot contain.
+         * @enum {string}
+         */
+        ContentQuality: "full_text" | "abstract_only" | "paywall_interstitial" | "rejected";
         /** CostSummary */
         CostSummary: {
             /**
@@ -453,6 +614,41 @@ export interface components {
             total_cost: number;
         };
         /**
+         * EvidenceSpan
+         * @description One quoted passage backing a verdict — Tier 0.5.
+         *
+         *     The whole point is that a human can check the finding in ten seconds:
+         *     ``quote`` is verbatim text from the source, ``source_url`` resolves to the
+         *     thing that was actually fetched, and ``verified_verbatim`` records whether
+         *     ASV confirmed the quote really appears there (LLMs fabricate quotes; see
+         *     VALUE_PROPOSITION.md §2.4(c) for this system doing exactly that once).
+         */
+        EvidenceSpan: {
+            /** Quote */
+            quote: string;
+            /**
+             * Role
+             * @default supporting
+             * @enum {string}
+             */
+            role: "supporting" | "contradicting" | "nearest_relevant";
+            /** Source Url */
+            source_url: string;
+            /** Retrieval Score */
+            retrieval_score?: number | null;
+            /** Char Start */
+            char_start?: number | null;
+            /** Char End */
+            char_end?: number | null;
+            /** Locator */
+            locator?: string | null;
+            /**
+             * Verified Verbatim
+             * @default false
+             */
+            verified_verbatim: boolean;
+        };
+        /**
          * FoundDatasetSource
          * @description Dataset source found by sourcefinder for originally uncited claims
          */
@@ -482,6 +678,111 @@ export interface components {
             /** Count */
             count: number;
         };
+        /** GoldEvidence */
+        GoldEvidence: {
+            /** Quote */
+            quote: string;
+            /** Char Start */
+            char_start?: number | null;
+            /** Char End */
+            char_end?: number | null;
+        };
+        /**
+         * GoldPair
+         * @description One hand-labelled claim-source pair.
+         */
+        GoldPair: {
+            /** Pair Id */
+            pair_id: string;
+            /** Field */
+            field: string;
+            /** Provenance */
+            provenance: string;
+            /** Claim Text */
+            claim_text: string;
+            /** Claim Id */
+            claim_id?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            source?: components["schemas"]["GoldSource"];
+            label: components["schemas"]["Verdict"];
+            /**
+             * Label Reason
+             * @default
+             */
+            label_reason: string;
+            /** Evidence Spans */
+            evidence_spans?: components["schemas"]["GoldEvidence"][];
+            /** Miscitation Types */
+            miscitation_types?: string[];
+            /**
+             * Difficulty
+             * @default easy
+             */
+            difficulty: string;
+            /**
+             * Is Seeded Negative
+             * @default false
+             */
+            is_seeded_negative: boolean;
+            /** Derived From */
+            derived_from?: string | null;
+            /** Annotator */
+            annotator?: string | null;
+            /** Annotated At */
+            annotated_at?: string | null;
+            /** Second Annotator */
+            second_annotator?: string | null;
+            second_label?: components["schemas"]["Verdict"] | null;
+            /** Adjudicated By */
+            adjudicated_by?: string | null;
+            adjudicated_label?: components["schemas"]["Verdict"] | null;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+        };
+        /** GoldSource */
+        GoldSource: {
+            /** Doi */
+            doi?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Content Quality */
+            content_quality?: string | null;
+            /** Text Sha256 */
+            text_sha256?: string | null;
+            /**
+             * Snapshot Kind
+             * @default excerpt
+             */
+            snapshot_kind: string;
+            /**
+             * Open Access
+             * @default false
+             */
+            open_access: boolean;
+        };
+        /** GoldStats */
+        GoldStats: {
+            /** Composition */
+            composition: {
+                [key: string]: unknown;
+            };
+            /** Readiness Problems */
+            readiness_problems: string[];
+            /** Miscitation Types */
+            miscitation_types: {
+                [key: string]: string;
+            };
+            /** Labelled */
+            labelled: number;
+            /** Unlabelled */
+            unlabelled: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -496,6 +797,38 @@ export interface components {
             /** Quads */
             quads: number[][];
         };
+        /** LabelRequest */
+        LabelRequest: {
+            /** Pair Id */
+            pair_id: string;
+            label: components["schemas"]["Verdict"];
+            /** Annotator */
+            annotator: string;
+            /**
+             * Label Reason
+             * @default
+             */
+            label_reason: string;
+            /** Evidence Spans */
+            evidence_spans?: components["schemas"]["GoldEvidence"][];
+            /** Miscitation Types */
+            miscitation_types?: string[];
+            /**
+             * Difficulty
+             * @default easy
+             */
+            difficulty: string;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /**
+             * Second Pass
+             * @default false
+             */
+            second_pass: boolean;
+        };
         /** LocationRef */
         LocationRef: {
             /** Start */
@@ -505,6 +838,173 @@ export interface components {
             /** Chunk Id */
             chunk_id?: number | null;
         };
+        /**
+         * NotCheckableReason
+         * @description Why ASV declined to judge a claim.
+         *
+         *     The reason is what tells a user what to *do*: ``abstract_only`` means "find
+         *     the full text", ``reference_not_found`` means "check your bibliography",
+         *     ``source_download_failed`` means "try again or log in". Collapsing these into
+         *     one ``failed`` is the defect Tier 0.2 exists to fix.
+         * @enum {string}
+         */
+        NotCheckableReason: "no_source_available" | "original_contribution" | "source_not_resolved" | "source_download_failed" | "abstract_only" | "paywall_interstitial" | "content_rejected" | "retrieval_empty" | "evidence_unverifiable" | "reference_not_found" | "reference_unverified" | "unresolvable_by_design" | "validation_error";
+        /**
+         * ReferenceAudit
+         * @description Tier 0.6 bibliography-audit rollup for one run.
+         */
+        ReferenceAudit: {
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Verified
+             * @default 0
+             */
+            verified: number;
+            /**
+             * Ambiguous
+             * @default 0
+             */
+            ambiguous: number;
+            /**
+             * Not Found In Indexes
+             * @default 0
+             */
+            not_found_in_indexes: number;
+            /**
+             * Unindexed By Design
+             * @default 0
+             */
+            unindexed_by_design: number;
+            /**
+             * Unverified
+             * @default 0
+             */
+            unverified: number;
+            /**
+             * Retracted
+             * @default 0
+             */
+            retracted: number;
+            /**
+             * Concern Raised
+             * @default 0
+             */
+            concern_raised: number;
+        };
+        /**
+         * ReferenceCheck
+         * @description Does the cited reference exist in the scholarly record? — Tier 0.6.
+         *
+         *     Orthogonal to the claim verdict: a reference that cannot be found says
+         *     nothing about whether the claim is true, and a retracted source can still
+         *     contain the sentence being cited. Both surface as their own object plus
+         *     ``ValidationResult.flags`` rather than as verdicts.
+         *
+         *     ``indexes_queried`` vs ``indexes_responded`` is the whole of the
+         *     "an API outage must never read as an accusation" rule: a
+         *     ``NOT_FOUND_IN_INDEXES`` status requires at least two indexes to have
+         *     actually responded.
+         */
+        ReferenceCheck: {
+            /** Citation Id */
+            citation_id: string;
+            /** Raw Citation Text */
+            raw_citation_text: string;
+            /** Parsed */
+            parsed?: {
+                [key: string]: unknown;
+            };
+            status: components["schemas"]["ReferenceStatus"];
+            /** Matched Doi */
+            matched_doi?: string | null;
+            /** Matched Title */
+            matched_title?: string | null;
+            /** Matched Url */
+            matched_url?: string | null;
+            /** Match Score */
+            match_score?: number | null;
+            /** Near Miss */
+            near_miss?: {
+                [key: string]: unknown;
+            } | null;
+            /** Indexes Queried */
+            indexes_queried?: string[];
+            /** Indexes Responded */
+            indexes_responded?: string[];
+            /** @default unknown */
+            retraction_status: components["schemas"]["RetractionStatus"];
+            /** Retraction Notice Url */
+            retraction_notice_url?: string | null;
+            /**
+             * Explanation
+             * @default
+             */
+            explanation: string;
+            /** Checked At */
+            checked_at?: string;
+        };
+        /**
+         * ReferenceCheckRow
+         * @description A bibliography-audit row, plus how many claims depend on it.
+         */
+        ReferenceCheckRow: {
+            /** Citation Id */
+            citation_id: string;
+            /** Raw Citation Text */
+            raw_citation_text: string;
+            /** Parsed */
+            parsed?: {
+                [key: string]: unknown;
+            };
+            status: components["schemas"]["ReferenceStatus"];
+            /** Matched Doi */
+            matched_doi?: string | null;
+            /** Matched Title */
+            matched_title?: string | null;
+            /** Matched Url */
+            matched_url?: string | null;
+            /** Match Score */
+            match_score?: number | null;
+            /** Near Miss */
+            near_miss?: {
+                [key: string]: unknown;
+            } | null;
+            /** Indexes Queried */
+            indexes_queried?: string[];
+            /** Indexes Responded */
+            indexes_responded?: string[];
+            /** @default unknown */
+            retraction_status: components["schemas"]["RetractionStatus"];
+            /** Retraction Notice Url */
+            retraction_notice_url?: string | null;
+            /**
+             * Explanation
+             * @default
+             */
+            explanation: string;
+            /** Checked At */
+            checked_at?: string;
+            /**
+             * Num Claims
+             * @default 0
+             */
+            num_claims: number;
+        };
+        /**
+         * ReferenceStatus
+         * @description Whether the cited reference exists in the scholarly record — Tier 0.6.
+         *
+         *     ``NOT_FOUND_IN_INDEXES`` is deliberately *not* named "fabricated". Saying a
+         *     real reference does not exist is an allegation; the enum, the explanation
+         *     strings, and the UI all say only what was actually observed — that the
+         *     named indexes did not return a match.
+         * @enum {string}
+         */
+        ReferenceStatus: "verified" | "ambiguous" | "not_found_in_indexes" | "unindexed_by_design" | "unverified";
         /**
          * ResolutionAttempt
          * @description One URL try when resolving a citation to a downloadable source.
@@ -516,24 +1016,29 @@ export interface components {
             source: string;
             /** Downloaded */
             downloaded: boolean;
+            content_quality?: components["schemas"]["ContentQuality"] | null;
             /** Error */
             error?: string | null;
         };
         /** ResultRef */
         ResultRef: {
-            /**
-             * Verdict
-             * @enum {string}
-             */
-            verdict: "passed" | "failed" | "unresolved_source" | "skipped";
+            verdict: components["schemas"]["Verdict"];
+            not_checkable_reason?: components["schemas"]["NotCheckableReason"] | null;
             /** Passed */
             passed: boolean;
             /** Confidence */
-            confidence: number;
+            confidence?: number | null;
             /** Method */
             method: string;
             /** Explanation */
             explanation: string;
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceSpan"][];
+            /** Source Url */
+            source_url?: string | null;
+            content_quality?: components["schemas"]["ContentQuality"] | null;
+            /** Flags */
+            flags?: string[];
             /** Errors */
             errors?: string | null;
             /** Sources Used */
@@ -544,7 +1049,22 @@ export interface components {
             validation_metadata?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Legacy
+             * @default false
+             */
+            legacy: boolean;
         };
+        /**
+         * RetractionStatus
+         * @description Retraction / correction state of a cited source — Tier 0.6.
+         *
+         *     Orthogonal to the claim verdict: a retracted paper can still literally
+         *     contain the sentence being cited, so this raises a flag rather than
+         *     changing a verdict.
+         * @enum {string}
+         */
+        RetractionStatus: "none" | "retracted" | "concern_raised" | "corrected" | "unknown";
         /** RetryRequest */
         RetryRequest: {
             /** Override Url */
@@ -579,6 +1099,11 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "awaiting_login" | "complete" | "failed";
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
             /** Total Elapsed Seconds */
             total_elapsed_seconds?: number | null;
             cost?: components["schemas"]["CostSummary"] | null;
@@ -588,8 +1113,13 @@ export interface components {
             };
             /** Verdict Breakdown */
             verdict_breakdown?: components["schemas"]["VerdictBreakdown"][];
+            /** Not Checkable Reasons */
+            not_checkable_reasons?: {
+                [key: string]: number;
+            };
             /** Resolution Funnel */
             resolution_funnel?: components["schemas"]["FunnelStage"][];
+            reference_audit?: components["schemas"]["ReferenceAudit"] | null;
             /** Awaiting Login Domains */
             awaiting_login_domains?: string[];
         };
@@ -606,18 +1136,30 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "awaiting_login" | "complete" | "failed";
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
             /** Total Claims */
             total_claims?: number | null;
-            /** Passed */
-            passed?: number | null;
-            /** Failed */
-            failed?: number | null;
-            /** Unresolved Source */
-            unresolved_source?: number | null;
-            /** Pass Rate */
-            pass_rate?: number | null;
-            /** Unresolved Source Rate */
-            unresolved_source_rate?: number | null;
+            /** Substantiated */
+            substantiated?: number | null;
+            /** Partially Substantiated */
+            partially_substantiated?: number | null;
+            /** Not Substantiated */
+            not_substantiated?: number | null;
+            /** Contradicted */
+            contradicted?: number | null;
+            /** Not Checkable */
+            not_checkable?: number | null;
+            /** Checkable Rate */
+            checkable_rate?: number | null;
+            /** Substantiation Rate */
+            substantiation_rate?: number | null;
+            /** Evidence Backed Verdicts */
+            evidence_backed_verdicts?: number | null;
+            reference_audit?: components["schemas"]["ReferenceAudit"] | null;
             /** Total Elapsed Seconds */
             total_elapsed_seconds?: number | null;
             cost?: components["schemas"]["CostSummary"] | null;
@@ -660,6 +1202,12 @@ export interface components {
              * @default false
              */
             batch_download_successful: boolean;
+            /**
+             * Batch Judgeable
+             * @default false
+             */
+            batch_judgeable: boolean;
+            content_quality?: components["schemas"]["ContentQuality"] | null;
         };
         /** StepStats */
         StepStats: {
@@ -670,6 +1218,11 @@ export interface components {
              * @default 0
              */
             count: number;
+            /**
+             * Checkable
+             * @default 0
+             */
+            checkable: number;
             /**
              * Passed
              * @default 0
@@ -682,6 +1235,14 @@ export interface components {
             failed: number;
             /** Avg Confidence */
             avg_confidence?: number | null;
+            /** Verdicts */
+            verdicts?: {
+                [key: string]: number;
+            };
+            /** Not Checkable Reasons */
+            not_checkable_reasons?: {
+                [key: string]: number;
+            };
         };
         /** ValidationError */
         ValidationError: {
@@ -696,6 +1257,18 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * Verdict
+         * @description What ASV concluded about one claim.
+         *
+         *     Exactly one of these lands on every ``ValidationResult``. The four
+         *     non-abstention values are *judgments about the claim* and, per Tier 0.5,
+         *     may only be emitted with a verbatim-verified evidence span plus a
+         *     resolvable source URL. ``NOT_CHECKABLE`` is an abstention and carries a
+         *     ``NotCheckableReason`` instead of a confidence.
+         * @enum {string}
+         */
+        Verdict: "substantiated" | "partially_substantiated" | "not_substantiated" | "contradicted" | "not_checkable";
         /** VerdictBreakdown */
         VerdictBreakdown: {
             /**
@@ -704,25 +1277,30 @@ export interface components {
              */
             group: "qual_uncited" | "quant_uncited" | "qual_cited" | "quant_cited";
             /**
-             * Passed
+             * Substantiated
              * @default 0
              */
-            passed: number;
+            substantiated: number;
             /**
-             * Failed
+             * Partially Substantiated
              * @default 0
              */
-            failed: number;
+            partially_substantiated: number;
             /**
-             * Unresolved Source
+             * Not Substantiated
              * @default 0
              */
-            unresolved_source: number;
+            not_substantiated: number;
             /**
-             * Skipped
+             * Contradicted
              * @default 0
              */
-            skipped: number;
+            contradicted: number;
+            /**
+             * Not Checkable
+             * @default 0
+             */
+            not_checkable: number;
         };
     };
     responses: never;
@@ -870,6 +1448,37 @@ export interface operations {
             };
         };
     };
+    list_references_api_runs__run_id__references_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceCheckRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     run_events_api_runs__run_id__events_get: {
         parameters: {
             query?: never;
@@ -971,8 +1580,11 @@ export interface operations {
             query?: {
                 group?: string | null;
                 verdict?: string | null;
+                not_checkable_reason?: string | null;
+                flag?: string | null;
                 claim_type?: string | null;
                 method?: string | null;
+                has_evidence?: boolean | null;
                 citation_id?: string | null;
                 is_original?: boolean | null;
                 originally_uncited?: boolean | null;
@@ -1187,6 +1799,205 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigStatus"];
+                };
+            };
+        };
+    };
+    stats_api_benchmark__name__stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoldStats"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pairs_api_benchmark__name__pairs_get: {
+        parameters: {
+            query?: {
+                unlabelled_only?: boolean;
+                needs_second_pass?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoldPair"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pair_api_benchmark__name__pairs__pair_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pair_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoldPair"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    label_pair_api_benchmark__name__label_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LabelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoldPair"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    adjudicate_api_benchmark__name__adjudicate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdjudicateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoldPair"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disagreements_api_benchmark__name__disagreements_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoldPair"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

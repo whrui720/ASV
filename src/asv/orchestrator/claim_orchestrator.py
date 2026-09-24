@@ -11,7 +11,12 @@ from collections import defaultdict
 
 from asv.core.models import (
     ClaimObject, ValidationResult, ValidationBatch, CitationDetails,
-    ResolutionAttempt, SourceManifestEntry,
+    ReferenceCheck, ResolutionAttempt, SourceManifestEntry,
+    RESULT_SCHEMA_VERSION, not_checkable,
+)
+from asv.core.verdicts import (
+    ContentQuality, NotCheckableReason, ReferenceStatus, RetractionStatus, Verdict,
+    CONTENT_QUALITY_REASON,
 )
 from asv.extraction.llm_client import LLMClient
 from asv.core.run_paths import RunPaths
@@ -19,9 +24,9 @@ from asv.core.run_events import RunEventLogger
 from asv.core.interaction import InteractionHandler, ConsoleInteractionHandler
 from asv.sourcefinder import DatasetFinder, TextFinder, DatasetDownloader, TextDownloader
 from asv.sourcefinder.browser_searcher import BrowserSearcher
-from asv.sourcefinder.config import KNOWN_PAYWALL_DOMAINS
+from asv.sourcefinder.config import ENABLE_REFERENCE_CHECK, KNOWN_PAYWALL_DOMAINS
+from asv.sourcefinder.reference_verifier import ReferenceVerifier
 from asv.sourcefinder.source_manifest import SourceManifest
-from asv.validator.truth_table_checker import TruthTableChecker
 from asv.validator.llm_verifier import LLMVerifier
 from .process_quantitative import ProcessQuantitative
 from .process_qualitative import ProcessQualitative
@@ -71,7 +76,6 @@ class ClaimOrchestrator:
         self.llm_client = LLMClient()
 
         # Initialize tool validators
-        self.truth_table = TruthTableChecker()
         self.llm_verifier = LLMVerifier(self.llm_client)
 
         # Initialize process orchestrators
@@ -92,6 +96,14 @@ class ClaimOrchestrator:
         self.text_source_manifest = SourceManifest(
             run_paths.text_sources_manifest_json(), run_paths.pdf_stem
         )
+
+        # Tier 0.6 — bibliography audit. Reuses the paper finder's LLM citation
+        # parser, which is already called (and cached) once per citation string
+        # during resolution, so the audit adds no LLM cost.
+        self.reference_verifier = ReferenceVerifier(
+            parse_citation=self.text_downloader._paper_finder._parse_citation_with_llm,
+        )
+        self.reference_checks: Dict[str, ReferenceCheck] = {}
 
         # Citations dict populated when claims are loaded from JSON
         self.citations_dict: Dict[str, str] = {}
@@ -122,13 +134,22 @@ class ClaimOrchestrator:
         logger.info(f"{'='*60}\n")
         self.events.emit("run_started", total_claims=len(claims))
 
+        # Step 0: bibliography audit (Tier 0.6). Runs before anything else
+        # because a reference that cannot be found in any index changes what
+        # every claim citing it can possibly mean — and because a verified
+        # reference hands the resolver a DOI it would otherwise only discover
+        # as a last resort.
+        t0 = time.time()
+        self._audit_references(claims, self.citations_dict)
+        step_timings_reference = round(time.time() - t0, 2)
+
         results = {
             "qualitative_uncited": [],
             "quantitative_uncited": [],
             "qualitative_cited": [],
             "quantitative_cited": []
         }
-        step_timings: Dict[str, float] = {}
+        step_timings: Dict[str, float] = {"reference_audit": step_timings_reference}
 
         # Step 1: Qualitative without citation
         logger.info("Step 1: Processing qualitative claims without citations...")
@@ -311,37 +332,278 @@ class ClaimOrchestrator:
             f"and paper-finder inst_cookies (domains: {touched_domains})"
         )
 
+    # ------------------------------------------------------------------
+    # Stage 0 — bibliography audit (Tier 0.6)
+    # ------------------------------------------------------------------
+
+    def _audit_references(
+        self, claims: List[ClaimObject], citations: Dict[str, str]
+    ) -> None:
+        """Check every reference for existence and retraction, then feed the
+        recovered DOIs forward into source resolution.
+
+        Runs over the *whole* bibliography, not just the references with claims
+        attached: a complete reference audit is itself a deliverable, and it
+        costs only HTTP calls against keyless indexes.
+        """
+        if not ENABLE_REFERENCE_CHECK:
+            logger.info("Reference audit disabled (ASV_REFERENCE_CHECK=0) — skipping")
+            return
+        if not citations:
+            logger.info("No bibliography entries to audit — skipping reference check")
+            return
+
+        logger.info(f"\nStep 0: Auditing {len(citations)} bibliography references...")
+        self.events.emit("step_started", step="reference_audit", count=len(citations))
+
+        def _progress(i: int, total: int, check: ReferenceCheck) -> None:
+            if i % 25 == 0 or i == total:
+                logger.info(f"  Reference audit: {i}/{total}")
+
+        self.reference_checks = self.reference_verifier.verify_all(citations, _progress)
+
+        counts: Dict[str, int] = defaultdict(int)
+        for check in self.reference_checks.values():
+            counts[check.status.value] += 1
+            if check.retraction_status == RetractionStatus.RETRACTED:
+                counts["retracted"] += 1
+            elif check.retraction_status == RetractionStatus.CONCERN_RAISED:
+                counts["concern_raised"] += 1
+
+        logger.info(
+            "  Reference audit complete: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        )
+        for cid, check in self.reference_checks.items():
+            if check.status == ReferenceStatus.NOT_FOUND_IN_INDEXES:
+                logger.warning(f"  ⚠ Reference [{cid}] {check.explanation}")
+            if check.retraction_status == RetractionStatus.RETRACTED:
+                logger.warning(f"  ⚠ Reference [{cid}] is RETRACTED: {check.matched_title}")
+
+        self._save_reference_checks(counts)
+        self.events.emit("step_finished", step="reference_audit", **dict(counts))
+
+        # Feed verified DOIs forward. SOURCE_ACQUISITION.md measures that 32 of
+        # 51 batches have exactly one candidate URL, and the resolver only
+        # reaches Crossref DOI recovery after everything else fails. On a corpus
+        # where zero of 253 references carry an inline DOI, handing the resolver
+        # a DOI up front is the cheapest acquisition improvement available.
+        enriched = 0
+        for claim in claims:
+            check = self.reference_checks.get(str(claim.citation_id or ""))
+            if check is None or not check.matched_doi:
+                continue
+            existing = claim.citation_details
+            if existing is not None and existing.doi:
+                continue
+            claim.citation_details = CitationDetails(
+                title=(existing.title if existing else None) or check.matched_title,
+                authors=existing.authors if existing else None,
+                year=existing.year if existing else None,
+                url=existing.url if existing else None,
+                doi=check.matched_doi,
+                raw_text=(existing.raw_text if existing else None)
+                or check.raw_citation_text,
+            )
+            enriched += 1
+        if enriched:
+            logger.info(f"  ✓ Attached verified DOIs to {enriched} claims for resolution")
+
+    def _save_reference_checks(self, counts: Dict[str, int]) -> None:
+        path = self.run_paths.reference_checks_json()
+        payload = {
+            "pdf_stem": self.run_paths.pdf_stem,
+            "generated_at": datetime.now().isoformat(),
+            "summary": dict(counts),
+            "checks": [c.model_dump(mode="json") for c in self.reference_checks.values()],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+            logger.info(f"  ✓ Reference audit saved to: {path}")
+        except Exception as e:
+            logger.error(f"  Failed to write reference audit: {e}")
+
+    def _reference_flags(self, citation_id: Optional[str]) -> List[str]:
+        """Orthogonal signals from the bibliography audit.
+
+        Deliberately *flags*, not verdicts: a retracted source can still contain
+        the sentence being cited, and a reference that no index carries says
+        nothing about whether the claim is true.
+        """
+        check = self.reference_checks.get(str(citation_id or ""))
+        if check is None:
+            return []
+        flags = []
+        if check.retraction_status == RetractionStatus.RETRACTED:
+            flags.append("cited_source_retracted")
+        elif check.retraction_status == RetractionStatus.CONCERN_RAISED:
+            flags.append("cited_source_concern_raised")
+        if check.status in (
+            ReferenceStatus.NOT_FOUND_IN_INDEXES, ReferenceStatus.UNINDEXED_BY_DESIGN
+        ):
+            flags.append("reference_unindexed")
+        return flags
+
+    # ------------------------------------------------------------------
+    # Shared batch helpers
+    # ------------------------------------------------------------------
+
+    def _batch_outcome(
+        self, download_result: Dict[str, Any]
+    ) -> Tuple[bool, Optional[ContentQuality], Optional[NotCheckableReason], str]:
+        """Classify a batch's source into the three-way outcome of Tier 0.3.
+
+        Returns ``(judgeable, content_quality, abstention_reason, note)``.
+
+        The middle case — bytes arrived but they are an abstract or an access
+        wall — is the one the pre-Tier-0 pipeline had no way to express. Ten of
+        sixteen successful downloads in the measured run were publisher landing
+        pages carrying an abstract and a reference list; RAG then searched a
+        document that could not contain the evidence, and whatever came back was
+        reported as a verdict about the claim.
+        """
+        quality = download_result.get('content_quality')
+        if isinstance(quality, str):
+            quality = ContentQuality(quality)
+
+        if not download_result.get('downloaded'):
+            error = download_result.get('error') or "no candidate URL could be fetched"
+            reason = (
+                NotCheckableReason.SOURCE_NOT_RESOLVED
+                if not download_result.get('attempts')
+                else NotCheckableReason.SOURCE_DOWNLOAD_FAILED
+            )
+            return False, quality, reason, f"Source could not be obtained: {error}"
+
+        if download_result.get('judgeable'):
+            return True, quality, None, "Full text obtained"
+
+        reason = CONTENT_QUALITY_REASON.get(
+            quality, NotCheckableReason.CONTENT_REJECTED
+        )
+        signals = download_result.get('content_signals') or {}
+        note = (
+            f"Source obtained but not usable as evidence "
+            f"({quality.value if quality else 'unknown'}): "
+            f"{signals.get('usable_chars', '?')} chars, "
+            f"{signals.get('imrad_count', 0)} IMRaD section(s)"
+        )
+        return False, quality, reason, note
+
+    def _abstain_batch(
+        self,
+        citation_id: str,
+        first_claim: ClaimObject,
+        claims_group: List[ClaimObject],
+        reason: NotCheckableReason,
+        note: str,
+        *,
+        attempts: List[ResolutionAttempt],
+        download_result: Dict[str, Any],
+        method: str,
+        quality: Optional[ContentQuality],
+    ) -> ValidationBatch:
+        """Build a batch where no claim could be judged, with an honest reason."""
+        explanation = {
+            NotCheckableReason.SOURCE_NOT_RESOLVED:
+                "No URL could be resolved for the cited source, so this claim could "
+                "not be checked.",
+            NotCheckableReason.SOURCE_DOWNLOAD_FAILED:
+                "The cited source could not be downloaded, so this claim could not be "
+                "checked. This says nothing about whether the claim is correct.",
+            NotCheckableReason.ABSTRACT_ONLY:
+                "Only an abstract or landing page could be obtained for the cited "
+                "source. ASV does not judge a claim against an abstract — the "
+                "evidence for most claims lives in the full text.",
+            NotCheckableReason.PAYWALL_INTERSTITIAL:
+                "The cited source returned an access wall rather than the article, so "
+                "this claim could not be checked.",
+            NotCheckableReason.CONTENT_REJECTED:
+                "The cited source returned no usable text, so this claim could not be "
+                "checked.",
+        }.get(reason, note)
+
+        winning_url = download_result.get('winning_url')
+        flags = self._reference_flags(citation_id)
+        claim_results = [
+            not_checkable(
+                claim, reason, explanation,
+                method=method,
+                errors=download_result.get('error'),
+                flags=list(flags),
+                source_url=winning_url,
+                content_quality=quality,
+            )
+            for claim in claims_group
+        ]
+
+        for claim in claims_group:
+            self.events.emit(
+                "claim_validated", claim_id=claim.claim_id,
+                verdict=Verdict.NOT_CHECKABLE.value, reason=reason.value,
+            )
+
+        return ValidationBatch(
+            citation_id=citation_id,
+            citation_text=first_claim.citation_text,
+            download_successful=bool(download_result.get('downloaded')),
+            judgeable=False,
+            content_quality=quality,
+            source_path=download_result.get('path'),
+            source_url=winning_url,
+            resolution_attempts=attempts,
+            reference_check=self.reference_checks.get(str(citation_id)),
+            claim_results=claim_results,
+            batch_notes=note,
+        )
+
+    # ------------------------------------------------------------------
+    # Uncited claims (Tier 0.1)
+    # ------------------------------------------------------------------
+
     def _process_uncited_qualitative(self, claims: List[ClaimObject]) -> List[ValidationResult]:
-        """Process qualitative claims without citations: Truth Table + LLM Check"""
+        """Uncited qualitative claims are not checkable. Full stop.
+
+        Tier 0.1. This method used to ask the Google Fact Check API and then a
+        small LLM whether the sentence sounded plausible, and report the answer
+        as a verdict with a confidence score. On the measured corpus that
+        produced 207 "passes" out of 233 claims with ``sources_used: []`` —
+        81% of all output and 97% of all passes, none of it backed by anything.
+
+        Worse, it inverted the project's own thesis twice over: it manufactured
+        exactly the confident-looking unsupported number ASV exists to catch,
+        and because a genuinely novel finding is by definition absent from a
+        model's priors, it scored *originality* lowest and platitudes highest.
+
+        There is no LLM call here any more.
+        """
         results = []
 
         for claim in claims:
-            logger.info(f"  Validating: {claim.claim_id}")
-
-            tt_result = self.truth_table.check_claim(claim.text)
-            llm_result = self.llm_verifier.verify_claim(claim.text)
-
-            passed = tt_result['found'] or llm_result['plausible']
-            confidence = max(tt_result['confidence'], llm_result['confidence'])
-
-            explanation = f"Truth Table: {tt_result['explanation']}. LLM Check: {llm_result['reasoning']}"
-
-            validation = ValidationResult(
-                claim_id=claim.claim_id,
-                claim_type=claim.claim_type,
-                originally_uncited=False,
-                validated=True,
-                validation_method="truth_table+llm_check",
-                confidence=confidence,
-                passed=passed,
-                explanation=explanation,
-                sources_used=tt_result.get('sources', [])
+            reason = (
+                NotCheckableReason.ORIGINAL_CONTRIBUTION if claim.is_original
+                else NotCheckableReason.NO_SOURCE_AVAILABLE
             )
-            results.append(validation)
+            explanation = (
+                "The paper presents this as its own contribution, so there is no external "
+                "source to check it against. (ASV does not assess whether a novel finding "
+                "is correct — only whether cited sources support what is claimed of them.)"
+                if claim.is_original else
+                "No citation was attached to this claim in the source document, so there "
+                "is no source to check it against. ASV does not judge claims from model "
+                "priors."
+            )
+            results.append(not_checkable(claim, reason, explanation))
+            self.events.emit(
+                "claim_validated", claim_id=claim.claim_id,
+                verdict=Verdict.NOT_CHECKABLE.value, reason=reason.value,
+            )
 
-            logger.info(f"    Result: {'PASSED' if passed else 'FAILED'} (confidence: {confidence:.2f})")
-            self.events.emit("claim_validated", claim_id=claim.claim_id, passed=passed, confidence=confidence)
-
+        logger.info(
+            f"  {len(results)} uncited qualitative claims recorded as not checkable "
+            f"(no LLM calls made)"
+        )
         return results
 
     def _process_uncited_quantitative(
@@ -355,45 +617,22 @@ class ClaimOrchestrator:
         Returns:
           - claims_to_route: only claims where a dataset source was found —
             these proceed to Step 4 batch validation with citation_id="found_{claim_id}".
-          - direct_results: ValidationResults for the two terminal branches that
-            do NOT proceed further (truth-table/LLM verified, and no-dataset-found).
-            These land directly in quantitative_uncited_results.json.
+          - direct_results: abstentions for claims where no dataset could be
+            located. These land directly in quantitative_uncited_results.json.
+
+        Tier 0.1 removed the plausibility short-circuit that used to sit in
+        front of the dataset search. It did not merely report a verdict from
+        priors — it *gated acquisition on one*, skipping the source search
+        entirely whenever a small model said the sentence sounded right above
+        0.8. That is the worst instance of the pattern in the codebase: the
+        less a claim looked like it needed checking, the less it got checked.
+        Every uncited quantitative claim now attempts source resolution.
         """
         claims_to_route: List[ClaimObject] = []
         direct_results: List[ValidationResult] = []
 
         for claim in claims:
             logger.info(f"  Processing: {claim.claim_id}")
-
-            tt_result = self.truth_table.check_claim(claim.text)
-            llm_result = self.llm_verifier.verify_claim(claim.text)
-
-            # Branch A: Truth-table / LLM strongly verified — no dataset needed.
-            if (tt_result['found'] and tt_result['confidence'] > 0.8) or \
-               (llm_result['plausible'] and llm_result['confidence'] > 0.8):
-                logger.info("    Claim verified by truth table/LLM, skipping sourcefinder")
-                passed = tt_result['found'] or llm_result['plausible']
-                confidence = max(tt_result['confidence'], llm_result['confidence'])
-                explanation = (
-                    f"Truth Table: {tt_result['explanation']}. "
-                    f"LLM Check: {llm_result['reasoning']}"
-                )
-                direct_results.append(ValidationResult(
-                    claim_id=claim.claim_id,
-                    claim_type=claim.claim_type,
-                    originally_uncited=False,
-                    validated=True,
-                    validation_method="truth_table+llm_only",
-                    confidence=confidence,
-                    passed=passed,
-                    explanation=explanation,
-                    sources_used=tt_result.get('sources', []),
-                ))
-                logger.info(f"    Result: {'PASSED' if passed else 'FAILED'} (confidence: {confidence:.2f})")
-                self.events.emit("claim_validated", claim_id=claim.claim_id, passed=passed, confidence=confidence)
-                continue
-
-            # Branch B: Try sourcefinder.
             logger.info("    Searching for dataset...")
             found_source = self.dataset_finder.find_dataset(claim.text, claim.claim_id)
 
@@ -415,18 +654,22 @@ class ClaimOrchestrator:
                 claims_to_route.append(claim)
             else:
                 logger.warning("    ✗ No dataset found for claim")
-                direct_results.append(ValidationResult(
-                    claim_id=claim.claim_id,
-                    claim_type=claim.claim_type,
-                    originally_uncited=True,
-                    validated=False,
-                    validation_method="source_not_found",
-                    confidence=0.0,
-                    passed=False,
-                    explanation="No dataset source could be located for this uncited quantitative claim.",
-                    sources_used=[],
+                # Previously reported as passed=False, confidence 0.0 — which
+                # reads as "this claim is wrong" when it means "we never checked
+                # it". Same correction as the batch-download-failure path.
+                direct_results.append(not_checkable(
+                    claim,
+                    NotCheckableReason.SOURCE_NOT_RESOLVED,
+                    "This quantitative claim carries no citation, and no dataset "
+                    "matching it could be located, so there is nothing to check it "
+                    "against.",
+                    method="source_not_found",
                 ))
-                self.events.emit("claim_validated", claim_id=claim.claim_id, passed=False, confidence=0.0)
+                self.events.emit(
+                    "claim_validated", claim_id=claim.claim_id,
+                    verdict=Verdict.NOT_CHECKABLE.value,
+                    reason=NotCheckableReason.SOURCE_NOT_RESOLVED.value,
+                )
 
         return claims_to_route, direct_results
 
@@ -490,7 +733,12 @@ class ClaimOrchestrator:
                 candidates.append((first_claim.citation_details.url, label))
             raw_citation_text = self.citations_dict.get(str(citation_id), "")
             if raw_citation_text:
-                for u in self.text_downloader._paper_finder.find_urls(raw_citation_text):
+                known_doi = (
+                    first_claim.citation_details.doi if first_claim.citation_details else None
+                )
+                for u in self.text_downloader._paper_finder.find_urls(
+                    raw_citation_text, known_doi=known_doi
+                ):
                     if u not in [c[0] for c in candidates]:
                         candidates.append((u, 'open_access'))
 
@@ -527,41 +775,25 @@ class ClaimOrchestrator:
                 downloaded_at=downloaded_at,
                 batch_num_claims=len(claims_group),
                 batch_download_successful=bool(download_result.get('downloaded')),
+                batch_judgeable=bool(download_result.get('downloaded')),
                 found_source=first_claim.found_source,
             )
             self.dataset_manifest.append(manifest_entry)
 
             if not download_result['downloaded']:
                 logger.error(f"    ✗ Download failed: {download_result.get('error')}")
-                claim_results = []
-                for claim in claims_group:
-                    claim_results.append(
-                        ValidationResult(
-                            claim_id=claim.claim_id,
-                            claim_type=claim.claim_type,
-                            originally_uncited=claim.originally_uncited,
-                            validated=False,
-                            validation_method="python_script",
-                            confidence=0.0,
-                            passed=False,
-                            explanation="Batch failed: dataset download unsuccessful",
-                            sources_used=[],
-                            errors=download_result.get('error')
-                        )
-                    )
-
-                batch_results.append(
-                    ValidationBatch(
-                        citation_id=citation_id,
-                        citation_text=first_claim.citation_text,
-                        download_successful=False,
-                        source_path=None,
-                        source_url=None,
-                        resolution_attempts=attempts,
-                        claim_results=claim_results,
-                        batch_notes=f"Download failed: {download_result.get('error')}"
-                    )
+                reason = (
+                    NotCheckableReason.SOURCE_NOT_RESOLVED if not attempts
+                    else NotCheckableReason.SOURCE_DOWNLOAD_FAILED
                 )
+                batch_results.append(self._abstain_batch(
+                    citation_id, first_claim, claims_group, reason,
+                    f"Source could not be obtained: {download_result.get('error')}",
+                    attempts=attempts,
+                    download_result={**download_result, 'winning_url': None},
+                    method="python_script",
+                    quality=None,
+                ))
                 self.events.emit(
                     "batch_finished", citation_id=str(citation_id), download_successful=False,
                     num_claims=len(claims_group),
@@ -573,12 +805,17 @@ class ClaimOrchestrator:
             claim_results = []
             for claim in claims_group:
                 logger.info(f"      Validating: {claim.claim_id}")
-                result = self.quant_processor.validate_claim(claim, download_result['path'])
+                result = self.quant_processor.validate_claim(
+                    claim, download_result['path'], source_url=winning_url,
+                    source_fetched_at=downloaded_at,
+                )
+                if result.verdict != Verdict.NOT_CHECKABLE:
+                    result.flags.extend(self._reference_flags(citation_id))
                 claim_results.append(result)
-                logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
+                logger.info(f"        Result: {result.verdict.value}")
                 self.events.emit(
                     "claim_validated", claim_id=claim.claim_id,
-                    passed=result.passed, confidence=result.confidence,
+                    verdict=result.verdict.value, confidence=result.confidence,
                 )
 
             if not _KEEP_SOURCES:
@@ -596,11 +833,13 @@ class ClaimOrchestrator:
                     citation_id=citation_id,
                     citation_text=first_claim.citation_text,
                     download_successful=True,
+                    judgeable=True,
                     source_path=download_result['path'],
                     source_url=winning_url,
                     resolution_attempts=attempts,
+                    reference_check=self.reference_checks.get(str(citation_id)),
                     claim_results=claim_results,
-                    batch_notes=f"Successfully validated {len(claim_results)} claims"
+                    batch_notes=f"Validated {len(claim_results)} claims against the dataset"
                 )
             )
             self.events.emit(
@@ -652,6 +891,12 @@ class ClaimOrchestrator:
                     source=a.source, downloaded=a.downloaded,
                 )
 
+            # Tier 0.3: three-way outcome. "Bytes arrived" and "the bytes are
+            # evidence" are different questions, and collapsing them is what let
+            # nine Nature landing pages be RAG-searched for evidence they could
+            # not contain.
+            judgeable, quality, reason, note = self._batch_outcome(download_result)
+
             downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
             manifest_entry = SourceManifestEntry(
                 citation_id=str(citation_id),
@@ -661,61 +906,51 @@ class ClaimOrchestrator:
                 resolution_attempts=attempts,
                 winning_url=winning_url,
                 format=download_result.get('format'),
+                content_quality=quality,
+                content_signals=download_result.get('content_signals'),
                 filename=Path(download_result['path']).name if download_result.get('path') else None,
                 downloaded_at=downloaded_at,
                 batch_num_claims=len(claims_group),
                 batch_download_successful=bool(download_result.get('downloaded')),
+                batch_judgeable=judgeable,
             )
             self.text_source_manifest.append(manifest_entry)
 
-            if not download_result['downloaded']:
-                logger.error(f"    ✗ Download failed: {download_result.get('error')}")
-                claim_results = []
-                for claim in claims_group:
-                    claim_results.append(
-                        ValidationResult(
-                            claim_id=claim.claim_id,
-                            claim_type=claim.claim_type,
-                            originally_uncited=claim.originally_uncited,
-                            validated=False,
-                            validation_method="rag_search",
-                            confidence=0.0,
-                            passed=False,
-                            explanation="Batch failed: text source download unsuccessful",
-                            sources_used=[],
-                            errors=download_result.get('error')
-                        )
-                    )
-
-                batch_results.append(
-                    ValidationBatch(
-                        citation_id=citation_id,
-                        citation_text=first_claim.citation_text,
-                        download_successful=False,
-                        source_path=None,
-                        source_url=None,
-                        resolution_attempts=attempts,
-                        claim_results=claim_results,
-                        batch_notes=f"Download failed: {download_result.get('error')}"
-                    )
-                )
+            if not judgeable:
+                logger.warning(f"    ✗ {note}")
+                batch_results.append(self._abstain_batch(
+                    citation_id, first_claim, claims_group, reason, note,
+                    attempts=attempts,
+                    download_result=download_result,
+                    method="rag_search",
+                    quality=quality,
+                ))
                 self.events.emit(
-                    "batch_finished", citation_id=str(citation_id), download_successful=False,
-                    num_claims=len(claims_group),
+                    "batch_finished", citation_id=str(citation_id),
+                    download_successful=bool(download_result.get('downloaded')),
+                    judgeable=False, num_claims=len(claims_group),
                 )
                 continue
 
-            logger.info(f"    ✓ Downloaded text: {download_result['path']}")
+            logger.info(f"    ✓ Full text obtained: {download_result['path']}")
 
             claim_results = []
             for claim in claims_group:
                 logger.info(f"      Validating: {claim.claim_id}")
-                result = self.qual_processor.validate_claim(claim, download_result.get('text_content'))
+                result = self.qual_processor.validate_claim(
+                    claim,
+                    download_result.get('text_content'),
+                    source_url=winning_url,
+                    content_quality=quality,
+                    source_fetched_at=downloaded_at,
+                )
+                if result.verdict != Verdict.NOT_CHECKABLE:
+                    result.flags.extend(self._reference_flags(citation_id))
                 claim_results.append(result)
-                logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
+                logger.info(f"        Result: {result.verdict.value}")
                 self.events.emit(
                     "claim_validated", claim_id=claim.claim_id,
-                    passed=result.passed, confidence=result.confidence,
+                    verdict=result.verdict.value, confidence=result.confidence,
                 )
 
             if not _KEEP_SOURCES:
@@ -733,11 +968,14 @@ class ClaimOrchestrator:
                     citation_id=citation_id,
                     citation_text=first_claim.citation_text,
                     download_successful=True,
+                    judgeable=True,
+                    content_quality=quality,
                     source_path=download_result['path'],
                     source_url=winning_url,
                     resolution_attempts=attempts,
+                    reference_check=self.reference_checks.get(str(citation_id)),
                     claim_results=claim_results,
-                    batch_notes=f"Successfully validated {len(claim_results)} claims (paper-text)"
+                    batch_notes=f"Judged {len(claim_results)} claims against paper text"
                 )
             )
             self.events.emit(
@@ -778,6 +1016,12 @@ class ClaimOrchestrator:
                     source=a.source, downloaded=a.downloaded,
                 )
 
+            # Tier 0.3: three-way outcome. "Bytes arrived" and "the bytes are
+            # evidence" are different questions, and collapsing them is what let
+            # nine Nature landing pages be RAG-searched for evidence they could
+            # not contain.
+            judgeable, quality, reason, note = self._batch_outcome(download_result)
+
             downloaded_at = datetime.now().isoformat() if download_result.get('downloaded') else None
             manifest_entry = SourceManifestEntry(
                 citation_id=str(citation_id),
@@ -787,61 +1031,51 @@ class ClaimOrchestrator:
                 resolution_attempts=attempts,
                 winning_url=winning_url,
                 format=download_result.get('format'),
+                content_quality=quality,
+                content_signals=download_result.get('content_signals'),
                 filename=Path(download_result['path']).name if download_result.get('path') else None,
                 downloaded_at=downloaded_at,
                 batch_num_claims=len(claims_group),
                 batch_download_successful=bool(download_result.get('downloaded')),
+                batch_judgeable=judgeable,
             )
             self.text_source_manifest.append(manifest_entry)
 
-            if not download_result['downloaded']:
-                logger.error(f"    ✗ Download failed: {download_result.get('error')}")
-                claim_results = []
-                for claim in claims_group:
-                    claim_results.append(
-                        ValidationResult(
-                            claim_id=claim.claim_id,
-                            claim_type=claim.claim_type,
-                            originally_uncited=claim.originally_uncited,
-                            validated=False,
-                            validation_method="rag_search",
-                            confidence=0.0,
-                            passed=False,
-                            explanation="Batch failed: text source download unsuccessful",
-                            sources_used=[],
-                            errors=download_result.get('error')
-                        )
-                    )
-
-                batch_results.append(
-                    ValidationBatch(
-                        citation_id=citation_id,
-                        citation_text=first_claim.citation_text,
-                        download_successful=False,
-                        source_path=None,
-                        source_url=None,
-                        resolution_attempts=attempts,
-                        claim_results=claim_results,
-                        batch_notes=f"Download failed: {download_result.get('error')}"
-                    )
-                )
+            if not judgeable:
+                logger.warning(f"    ✗ {note}")
+                batch_results.append(self._abstain_batch(
+                    citation_id, first_claim, claims_group, reason, note,
+                    attempts=attempts,
+                    download_result=download_result,
+                    method="rag_search",
+                    quality=quality,
+                ))
                 self.events.emit(
-                    "batch_finished", citation_id=str(citation_id), download_successful=False,
-                    num_claims=len(claims_group),
+                    "batch_finished", citation_id=str(citation_id),
+                    download_successful=bool(download_result.get('downloaded')),
+                    judgeable=False, num_claims=len(claims_group),
                 )
                 continue
 
-            logger.info(f"    ✓ Downloaded text: {download_result['path']}")
+            logger.info(f"    ✓ Full text obtained: {download_result['path']}")
 
             claim_results = []
             for claim in claims_group:
                 logger.info(f"      Validating: {claim.claim_id}")
-                result = self.qual_processor.validate_claim(claim, download_result.get('text_content'))
+                result = self.qual_processor.validate_claim(
+                    claim,
+                    download_result.get('text_content'),
+                    source_url=winning_url,
+                    content_quality=quality,
+                    source_fetched_at=downloaded_at,
+                )
+                if result.verdict != Verdict.NOT_CHECKABLE:
+                    result.flags.extend(self._reference_flags(citation_id))
                 claim_results.append(result)
-                logger.info(f"        Result: {'PASSED' if result.passed else 'FAILED'}")
+                logger.info(f"        Result: {result.verdict.value}")
                 self.events.emit(
                     "claim_validated", claim_id=claim.claim_id,
-                    passed=result.passed, confidence=result.confidence,
+                    verdict=result.verdict.value, confidence=result.confidence,
                 )
 
             if not _KEEP_SOURCES:
@@ -859,11 +1093,14 @@ class ClaimOrchestrator:
                     citation_id=citation_id,
                     citation_text=first_claim.citation_text,
                     download_successful=True,
+                    judgeable=True,
+                    content_quality=quality,
                     source_path=download_result['path'],
                     source_url=winning_url,
                     resolution_attempts=attempts,
+                    reference_check=self.reference_checks.get(str(citation_id)),
                     claim_results=claim_results,
-                    batch_notes=f"Successfully validated {len(claim_results)} claims"
+                    batch_notes=f"Judged {len(claim_results)} claims against full text"
                 )
             )
             self.events.emit(
@@ -882,28 +1119,49 @@ class ClaimOrchestrator:
     ) -> None:
         """Save a structured JSON summary of the run for quick inspection."""
 
-        def _result_stats(result_list):
-            if not result_list:
-                return {"count": 0, "passed": 0, "failed": 0, "avg_confidence": None}
-            passed = failed = 0
-            confidences = []
+        def _flatten(result_list):
             for r in result_list:
-                # ValidationBatch: look at claim_results inside
                 if isinstance(r, ValidationBatch):
-                    for cr in r.claim_results:
-                        if cr.passed:
-                            passed += 1
-                        else:
-                            failed += 1
-                        confidences.append(cr.confidence)
+                    yield from r.claim_results
                 elif isinstance(r, ValidationResult):
-                    if r.passed:
-                        passed += 1
-                    else:
-                        failed += 1
-                    confidences.append(r.confidence)
+                    yield r
+
+        def _result_stats(result_list):
+            """Per-step counts over the Tier 0.2 ontology.
+
+            ``avg_confidence`` now averages only the results that *carry* a
+            confidence. Abstentions have ``confidence=None`` by construction, so
+            the old ``sum(confidences)/len(confidences)`` would raise — and
+            averaging a zero in for every unchecked claim was what produced the
+            "avg confidence 0.886" line that made an unsourced run look
+            measured.
+            """
+            counts = {v.value: 0 for v in Verdict}
+            reasons: Dict[str, int] = defaultdict(int)
+            confidences: List[float] = []
+            total = 0
+            for cr in _flatten(result_list):
+                total += 1
+                counts[cr.verdict.value] += 1
+                if cr.not_checkable_reason is not None:
+                    reasons[cr.not_checkable_reason.value] += 1
+                if cr.confidence is not None:
+                    confidences.append(cr.confidence)
+
+            checkable = total - counts[Verdict.NOT_CHECKABLE.value]
             avg_conf = round(sum(confidences) / len(confidences), 3) if confidences else None
-            return {"count": passed + failed, "passed": passed, "failed": failed, "avg_confidence": avg_conf}
+            return {
+                "count": total,
+                "checkable": checkable,
+                # Legacy field kept for one release so existing dashboards and
+                # the compare view keep rendering; read `verdicts` instead.
+                "passed": counts[Verdict.SUBSTANTIATED.value],
+                "failed": counts[Verdict.NOT_SUBSTANTIATED.value]
+                + counts[Verdict.CONTRADICTED.value],
+                "avg_confidence": avg_conf,
+                "verdicts": counts,
+                "not_checkable_reasons": dict(sorted(reasons.items())),
+            }
 
         total_elapsed = round(time.time() - run_start, 2)
         # B7: surface accumulated LLM cost/token usage on the run summary so
@@ -934,6 +1192,54 @@ class ClaimOrchestrator:
             },
         }
 
+        # Tier 0.2 — run-level verdict rollup. `substantiation_rate` is computed
+        # over *checkable* claims only. The old `pass_rate` divided by
+        # passed+failed, which on the measured run put 217 unsourced
+        # plausibility passes in the numerator and called it 73%.
+        all_results = [
+            r
+            for step in summary["steps"]
+            for r in _flatten(results.get(step, []))
+        ]
+        verdict_totals = {v.value: 0 for v in Verdict}
+        reason_totals: Dict[str, int] = defaultdict(int)
+        evidenced = 0
+        for r in all_results:
+            verdict_totals[r.verdict.value] += 1
+            if r.not_checkable_reason is not None:
+                reason_totals[r.not_checkable_reason.value] += 1
+            if r.evidence:
+                evidenced += 1
+        total_results = len(all_results)
+        checkable = total_results - verdict_totals[Verdict.NOT_CHECKABLE.value]
+        summary["verdicts"] = verdict_totals
+        summary["not_checkable_reasons"] = dict(sorted(reason_totals.items()))
+        summary["totals"] = {
+            "claims": total_results,
+            "checkable": checkable,
+            "checkable_rate": round(checkable / total_results, 3) if total_results else None,
+            "substantiated": verdict_totals[Verdict.SUBSTANTIATED.value],
+            "substantiation_rate": (
+                round(verdict_totals[Verdict.SUBSTANTIATED.value] / checkable, 3)
+                if checkable else None
+            ),
+            "evidence_backed_verdicts": evidenced,
+        }
+
+        # Tier 0.6 — bibliography audit rollup.
+        if self.reference_checks:
+            ref_counts: Dict[str, int] = defaultdict(int)
+            for check in self.reference_checks.values():
+                ref_counts[check.status.value] += 1
+                if check.retraction_status == RetractionStatus.RETRACTED:
+                    ref_counts["retracted"] += 1
+                elif check.retraction_status == RetractionStatus.CONCERN_RAISED:
+                    ref_counts["concern_raised"] += 1
+            summary["reference_audit"] = {
+                "total": len(self.reference_checks),
+                **dict(sorted(ref_counts.items())),
+            }
+
         summary_path = self.run_paths.run_summary_json()
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
@@ -941,15 +1247,31 @@ class ClaimOrchestrator:
 
     def _save_results(self, results: Dict[str, Any]) -> None:
         """Save results to separate JSON files by claim type."""
+        # Tier 0.2 / TIER0_PLAN.md §9: stamp the schema version once per run.
+        # The result files stay plain JSON *lists* — every existing analysis
+        # snippet (VALUE_PROPOSITION.md Appendix A) depends on that shape, and
+        # the eight historical run folders are the evidence base for the
+        # project's own published numbers. The API additionally treats any entry
+        # without a `verdict` key as legacy, which handles the mixed-shape file
+        # `revalidate_citation` can produce when retrying into an old run.
+        try:
+            with open(self.run_paths.results_schema_json(), "w", encoding="utf-8") as f:
+                json.dump({
+                    "schema_version": RESULT_SCHEMA_VERSION,
+                    "written_at": datetime.now().isoformat(),
+                }, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not write results schema marker: {e}")
+
         for claim_type, validation_results in results.items():
             output_path = self.output_dir / f"{claim_type}_results.json"
 
             serialized_results = []
             for result in validation_results:
                 if isinstance(result, ValidationBatch):
-                    serialized_results.append(result.model_dump())
+                    serialized_results.append(result.model_dump(mode="json"))
                 elif isinstance(result, ValidationResult):
-                    serialized_results.append(result.model_dump())
+                    serialized_results.append(result.model_dump(mode="json"))
                 else:
                     serialized_results.append(result)
 
@@ -1030,11 +1352,25 @@ class ClaimOrchestrator:
         replaced = False
         for i, entry in enumerate(existing):
             if entry.get("citation_id") == batch.citation_id:
-                existing[i] = batch.model_dump()
+                existing[i] = batch.model_dump(mode="json")
                 replaced = True
                 break
         if not replaced:
-            existing.append(batch.model_dump())
+            existing.append(batch.model_dump(mode="json"))
+
+        # TIER0_PLAN.md §9.4: a retry writes a Tier-0 batch into what may be a
+        # pre-Tier-0 file. Rather than leave one file holding both shapes, stamp
+        # the run as v2 — the API detects legacy *entries* individually, so the
+        # untouched ones still read correctly.
+        try:
+            with open(self.run_paths.results_schema_json(), "w", encoding="utf-8") as f:
+                json.dump({
+                    "schema_version": RESULT_SCHEMA_VERSION,
+                    "written_at": datetime.now().isoformat(),
+                    "note": "upgraded in place by revalidate_citation",
+                }, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not write results schema marker: {e}")
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(existing, f, indent=2, ensure_ascii=False)

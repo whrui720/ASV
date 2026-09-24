@@ -18,13 +18,25 @@ router = APIRouter(prefix="/api", tags=["claims"])
 def _compute_facets(rows: List[ClaimRow]) -> Dict[str, Dict[str, int]]:
     """Facet counts over the full (unfiltered) row set — cheap, and lets the
     UI show "233" next to a filter chip whether or not it's currently applied."""
-    facets: Dict[str, Dict[str, int]] = {"group": {}, "verdict": {}, "claim_type": {}, "method": {}}
+    facets: Dict[str, Dict[str, int]] = {
+        "group": {}, "verdict": {}, "claim_type": {}, "method": {},
+        # Tier 0.2: the reason is what tells a reader what to do about an
+        # abstention, so it gets its own filter rather than being buried in
+        # thirteen verdict values.
+        "not_checkable_reason": {}, "flag": {},
+    }
     for r in rows:
         facets["group"][r.group] = facets["group"].get(r.group, 0) + 1
         facets["claim_type"][r.claim_type] = facets["claim_type"].get(r.claim_type, 0) + 1
         if r.result:
-            facets["verdict"][r.result.verdict] = facets["verdict"].get(r.result.verdict, 0) + 1
+            v = r.result.verdict.value
+            facets["verdict"][v] = facets["verdict"].get(v, 0) + 1
             facets["method"][r.result.method] = facets["method"].get(r.result.method, 0) + 1
+            if r.result.not_checkable_reason is not None:
+                k = r.result.not_checkable_reason.value
+                facets["not_checkable_reason"][k] = facets["not_checkable_reason"].get(k, 0) + 1
+            for flag in r.result.flags:
+                facets["flag"][flag] = facets["flag"].get(flag, 0) + 1
     return facets
 
 
@@ -33,8 +45,11 @@ def list_claims(
     run_paths: RunPaths = Depends(get_run_paths),
     group: Optional[str] = None,
     verdict: Optional[str] = None,
+    not_checkable_reason: Optional[str] = None,
+    flag: Optional[str] = None,
     claim_type: Optional[str] = None,
     method: Optional[str] = None,
+    has_evidence: Optional[bool] = None,
     citation_id: Optional[str] = None,
     is_original: Optional[bool] = None,
     originally_uncited: Optional[bool] = None,
@@ -50,7 +65,19 @@ def list_claims(
     def matches(r: ClaimRow) -> bool:
         if group and r.group != group:
             return False
-        if verdict and (r.result is None or r.result.verdict != verdict):
+        if verdict and (r.result is None or r.result.verdict.value != verdict):
+            return False
+        if not_checkable_reason and (
+            r.result is None
+            or r.result.not_checkable_reason is None
+            or r.result.not_checkable_reason.value != not_checkable_reason
+        ):
+            return False
+        if flag and (r.result is None or flag not in r.result.flags):
+            return False
+        if has_evidence is not None and (
+            r.result is None or bool(r.result.evidence) != has_evidence
+        ):
             return False
         if claim_type and r.claim_type != claim_type:
             return False

@@ -8,7 +8,7 @@ Orchestration logic for claim validation lives here (`src/asv/orchestrator/`).
 - Batch cited claims by `citation_id`
 - Split cited-quantitative batches by source shape (dataset-backed vs paper-backed) — see below
 - Coordinate `sourcefinder` downloads
-- Invoke validator tools (`TruthTableChecker`, `LLMVerifier`) and orchestration sub-validators
+- Invoke validator tools (`LLMVerifier`) and orchestration sub-validators
 - Persist grouped output JSON files under the active run folder
 
 ## Modules

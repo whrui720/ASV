@@ -11,7 +11,7 @@ pip install -r requirements.txt
 Create a `.env` file in the project root:
 ```bash
 GEMINI_API_KEY=your_gemini_api_key_here
-GOOGLE_FACT_CHECK_API_KEY=your_google_key_here  # Optional
+PUBMED_API_KEY=your_pubmed_key_here            # Optional (raises PubMed rate limit)
 
 ```
 
@@ -115,21 +115,56 @@ cd apps/web && npm run gen-types
 After validation, the run folder `runs/{pdf_stem}__{YYYYMMDD_HHMMSS}/` contains 4 JSON files under `validation_results/`:
 
 ### 1. qualitative_uncited_results.json
+
+A claim with no citation has no source to check against, so it is never judged —
+see `docs/TIER0_PLAN.md` §3. The reason code is the actionable part.
+
 ```json
 [
   {
     "claim_id": "claim_0_1",
     "claim_type": "qualitative",
     "originally_uncited": false,
-    "validated": true,
-    "validation_method": "truth_table+llm_check",
-    "confidence": 0.85,
-    "passed": true,
-    "explanation": "Truth Table: Verified. LLM Check: Plausible.",
-    "sources_used": ["https://factcheck.com/..."],
+    "validated": false,
+    "validation_method": "not_checkable",
+    "verdict": "not_checkable",
+    "not_checkable_reason": "no_source_available",
+    "confidence": null,
+    "passed": false,
+    "explanation": "No citation was attached to this claim in the source document, so there is no source to check it against. ASV does not judge claims from model priors.",
+    "evidence": [],
+    "source_url": null,
+    "flags": [],
+    "sources_used": [],
     "errors": null
   }
 ]
+```
+
+A judged claim instead looks like this — note that the four non-abstention
+verdicts cannot be written without a verbatim-verified quote and a resolvable URL:
+
+```json
+{
+  "verdict": "partially_substantiated",
+  "not_checkable_reason": null,
+  "confidence": 0.74,
+  "explanation": "The source reports this in a murine model; the claim states it of patients.",
+  "evidence": [
+    {
+      "quote": "in a murine model, titres peaked at 24 hours post-infection",
+      "role": "supporting",
+      "source_url": "https://europepmc.org/article/MED/1234567",
+      "retrieval_score": 0.41,
+      "char_start": 18422,
+      "char_end": 18480,
+      "verified_verbatim": true
+    }
+  ],
+  "source_url": "https://europepmc.org/article/MED/1234567",
+  "content_quality": "full_text",
+  "flags": ["cited_source_retracted"]
+}
 ```
 
 ### 2. quantitative_uncited_results.json
@@ -339,21 +374,21 @@ results = orchestrator.process_claims(quant_claims, citations)
 
 ### Example 3: Custom Validation Pipeline
 ```python
-from asv.validator import TruthTableChecker, LLMVerifier
+from asv.validator import LLMVerifier
 
-# Use individual validators
-truth_checker = TruthTableChecker()
 llm_verifier = LLMVerifier(llm_client)
 
-for claim in claims:
-    # Check truth table
-    tt_result = truth_checker.check_claim(claim.text)
-    
-    if not tt_result['found']:
-        # Fallback to LLM
-        llm_result = llm_verifier.verify_claim(claim.text)
-        print(f"LLM: {llm_result['plausible']}")
+for claim, source_text, source_url in pairs:
+    result = llm_verifier.verify_claim_against_source(
+        claim.text, source_text, source_url=source_url,
+    )
+    print(result["verdict"], result.get("not_checkable_reason"))
+    for span in result["evidence"]:
+        print("  ", span.quote)
 ```
+
+There is no source-free path. `LLMVerifier` has no `verify_claim`: a claim with
+no source is reported as `not_checkable`, never scored against model priors.
 
 ## Cost Estimates
 

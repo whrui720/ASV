@@ -1,12 +1,20 @@
 """Text Downloader - Download text sources (PDF, HTML, plain text)"""
 
 import logging
+import re
 import requests
 from pathlib import Path
-from typing import Dict, Any, Optional
-from .config import DOWNLOAD_TIMEOUT, TEXT_OUTPUT_DIR, INSTITUTIONAL_COOKIES
+from typing import Dict, Any, Optional, Tuple
+from .config import (
+    DOWNLOAD_TIMEOUT,
+    TEXT_OUTPUT_DIR,
+    INSTITUTIONAL_COOKIES,
+    MAX_CANDIDATES_PER_BATCH,
+)
 from .academic_paper_finder import AcademicPaperFinder
+from .content_quality import assess_content
 from asv.core.run_paths import RunPaths
+from asv.core.verdicts import ContentQuality, content_quality_rank
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +56,21 @@ class TextDownloader:
     # to the next candidate URL instead of feeding empty text to the RAG step.
     _MIN_USABLE_TEXT_CHARS = 200
 
-    def download(self, url: str, citation_id: str) -> Dict[str, Any]:
+    def download(
+        self, url: str, citation_id: str, *, filename_suffix: str = ""
+    ) -> Dict[str, Any]:
         """
         Download text source from URL via ``self.session`` (a ``requests.Session``).
-        Returns: {downloaded: bool, format: str, path: str, text_content: str, error: str}
+        Returns: {downloaded, format, path, text_content, content_quality,
+                  content_signals, judgeable, error}
 
-        A successful HTTP fetch is not enough. If the payload's extracted text is
-        empty or under ``_MIN_USABLE_TEXT_CHARS``, we consider the download a
-        failure (delete the on-disk file, return ``downloaded=False``) so the
-        caller's cascade can try another URL.
+        A successful HTTP fetch is not enough, on two levels. If extraction
+        yields less than ``_MIN_USABLE_TEXT_CHARS`` the payload is rejected
+        outright (file deleted, ``downloaded=False``) so the caller's cascade
+        continues. If it yields *plenty* of text that is nonetheless an abstract
+        or an access wall, ``downloaded`` stays True — we really did fetch
+        something and the manifest should say so — but ``judgeable`` is False
+        and the orchestrator refuses to judge against it (Tier 0.3).
         """
         try:
             logger.info(f"Downloading text from: {url}")
@@ -66,11 +80,15 @@ class TextDownloader:
             logger.error(f"✗ Download failed: {e}")
             return {
                 'downloaded': False, 'format': None, 'path': None,
-                'text_content': None, 'error': str(e),
+                'text_content': None, 'content_quality': None,
+                'content_signals': None, 'judgeable': False, 'error': str(e),
             }
 
         content_type = response.headers.get('content-type', '').lower()
-        return self._process_bytes(response.content, url, citation_id, content_type)
+        return self._process_bytes(
+            response.content, url, citation_id, content_type,
+            filename_suffix=filename_suffix,
+        )
 
     def _process_bytes(
         self,
@@ -78,19 +96,25 @@ class TextDownloader:
         url: str,
         citation_id: str,
         content_type: str = "",
+        *,
+        filename_suffix: str = "",
     ) -> Dict[str, Any]:
         """
-        Save raw bytes, sniff format, extract text, and apply the
-        ``_MIN_USABLE_TEXT_CHARS`` gate. Shared between the ``requests``-based
-        ``download()`` path and the Playwright browser fallback in
-        ``download_with_resolution()`` — both hand off raw bytes to this method
-        so format detection, on-disk layout, and gating rules stay consistent.
+        Save raw bytes, sniff format, extract text, and classify the result.
+        Shared between the ``requests``-based ``download()`` path and the
+        Playwright browser fallback in ``download_with_resolution()`` — both
+        hand off raw bytes here so format detection, on-disk layout, and the
+        content-quality gate stay consistent. This is the single choke point
+        Tier 0.3 hangs off.
         """
         result = {
             'downloaded': False,
             'format': None,
             'path': None,
             'text_content': None,
+            'content_quality': None,
+            'content_signals': None,
+            'judgeable': False,
             'error': None,
         }
 
@@ -102,40 +126,54 @@ class TextDownloader:
             # vice-versa).
             file_format = self._detect_format(url, content_type, body[:512])
 
-            filename = f"citation_{citation_id}_text.{file_format}"
+            filename = f"citation_{citation_id}{filename_suffix}_text.{file_format}"
             local_path = self.output_dir / filename
             with open(local_path, 'wb') as f:
                 f.write(body)
 
+            page_count: Optional[int] = None
             if file_format == 'pdf':
-                text_content = self._extract_pdf_text(local_path)
+                text_content, page_count = self._extract_pdf_text(local_path)
             elif file_format in ('html', 'htm'):
                 text_content = self._extract_html_text(body.decode('utf-8', errors='replace'))
             else:
                 text_content = body.decode('utf-8', errors='replace')
 
-            # Gate: require meaningful extracted content. Otherwise the RAG step
-            # downstream sees nothing and the batch silently degrades to LLM
-            # plausibility — worse than trying another candidate.
-            usable_len = len((text_content or "").strip())
-            if usable_len < self._MIN_USABLE_TEXT_CHARS:
+            assessment = assess_content(
+                text_content, file_format=file_format, page_count=page_count, url=url,
+            )
+            result['content_quality'] = assessment.quality
+            result['content_signals'] = assessment.signals
+
+            # REJECTED keeps the pre-Tier-0 behaviour exactly: delete the file
+            # and report a failed download, so the cascade moves on. Everything
+            # else is kept — an abstract is a real fetch, it is just not
+            # evidence, and the distinction has to survive into the manifest.
+            if assessment.quality == ContentQuality.REJECTED:
                 try:
                     local_path.unlink()
                 except Exception:
                     pass
-                err = (
-                    f"Extraction produced {usable_len} usable chars "
-                    f"(<{self._MIN_USABLE_TEXT_CHARS}); format={file_format}"
-                )
-                result['error'] = err
-                logger.warning(f"  ✗ {err}")
+                result['error'] = f"Unusable content: {assessment.reason}"
+                logger.warning(f"  ✗ {result['error']}")
                 return result
 
             result['downloaded'] = True
             result['format'] = file_format
             result['path'] = str(local_path)
             result['text_content'] = text_content
-            logger.info(f"✓ Downloaded to: {local_path} ({usable_len} chars extracted)")
+            result['judgeable'] = assessment.judgeable
+            usable_len = assessment.signals.get('usable_chars', 0)
+            if assessment.judgeable:
+                logger.info(
+                    f"✓ Downloaded to: {local_path} "
+                    f"({usable_len} chars, full text — {assessment.reason})"
+                )
+            else:
+                logger.warning(
+                    f"  ⚠ Fetched but not judgeable [{assessment.quality.value}]: "
+                    f"{assessment.reason}"
+                )
 
         except Exception as e:
             if local_path is not None:
@@ -184,7 +222,7 @@ class TextDownloader:
 
         return 'txt'
 
-    def _extract_pdf_text(self, pdf_path: Path) -> str:
+    def _extract_pdf_text(self, pdf_path: Path) -> Tuple[str, Optional[int]]:
         """
         Extract text from PDF using a fallback chain of parsers.
 
@@ -194,20 +232,27 @@ class TextDownloader:
           3. pypdf           — modern successor to PyPDF2 (kept as last resort)
 
         A parser is considered successful only when it yields non-whitespace text.
-        Returns "" when all three fail — download() then treats this as a
-        failed extraction and the caller can iterate to the next candidate URL.
+        Returns ``("", page_count)`` when all three fail — download() then treats
+        this as a failed extraction and the caller can iterate to the next
+        candidate URL.
+
+        Also returns the page count (Tier 0.3): a one- or two-page PDF carrying
+        an "Abstract" heading is an abstract, not an article, and page count is
+        the cheapest way to know that. It was previously computed and discarded.
         """
         path_str = str(pdf_path)
+        page_count: Optional[int] = None
 
         # 1. PyMuPDF (fitz) — primary.
         try:
             import fitz  # PyMuPDF
             with fitz.open(path_str) as doc:
+                page_count = doc.page_count
                 pages = [page.get_text() for page in doc]  # type: ignore[attr-defined]
             text = "\n\n".join(pages)
             if text.strip():
-                logger.debug(f"  PDF extracted via pymupdf: {len(text)} chars")
-                return text
+                logger.debug(f"  PDF extracted via pymupdf: {len(text)} chars, {page_count}p")
+                return text, page_count
             logger.debug("  pymupdf returned empty text — trying pdfminer.six")
         except Exception as e:
             logger.debug(f"  pymupdf extraction failed: {e}")
@@ -218,7 +263,7 @@ class TextDownloader:
             text = pdfminer_extract(path_str) or ""
             if text.strip():
                 logger.info(f"  PDF extracted via pdfminer.six (fallback): {len(text)} chars")
-                return text
+                return text, page_count
             logger.debug("  pdfminer.six returned empty text — trying pypdf")
         except Exception as e:
             logger.debug(f"  pdfminer.six extraction failed: {e}")
@@ -227,16 +272,18 @@ class TextDownloader:
         try:
             from pypdf import PdfReader
             reader = PdfReader(path_str)
+            if page_count is None:
+                page_count = len(reader.pages)
             pages = [(p.extract_text() or "") for p in reader.pages]
             text = "\n\n".join(pages)
             if text.strip():
                 logger.info(f"  PDF extracted via pypdf (fallback): {len(text)} chars")
-                return text
+                return text, page_count
         except Exception as e:
             logger.debug(f"  pypdf extraction failed: {e}")
 
         logger.warning(f"  All PDF extractors returned empty text for {pdf_path.name}")
-        return ""
+        return "", page_count
 
     def _extract_html_text(self, html_content: str) -> str:
         """
@@ -342,47 +389,100 @@ class TextDownloader:
 
         The returned dict includes an ``attempts`` list — one entry per URL tried,
         tagged with the resolution phase (``direct`` / ``open_access`` /
-        ``institutional_cookies`` / ``browser``) — so callers can persist the
-        full cascade.
+        ``institutional_cookies`` / ``browser``) and with the content quality of
+        whatever came back — so callers can persist the full cascade.
+
+        **Best-of-N, not first-success (Tier 0.3, TIER0_PLAN.md §4.4).** This
+        used to return on the first candidate that fetched. With the content
+        gate in place that would be strictly harmful: candidate 1 is typically a
+        publisher landing page, which fetches fine, gets refused as
+        ``abstract_only``, and the Europe PMC full-text mirror sitting at
+        candidate 2 is never tried — converting a fake pass into an abstention
+        while leaving real evidence on the table. So we walk the candidate list
+        keeping the *best* result, and stop early the moment full text appears.
         """
         attempts: list[dict] = []
+        best: Optional[Dict[str, Any]] = None
+        best_url: Optional[str] = None
+        last_error: Optional[str] = None
+        fetches = 0
 
-        def _record(url: str, source: str, result: Dict[str, Any]) -> None:
+        def _discard(result: Optional[Dict[str, Any]]) -> None:
+            """Delete a superseded candidate's file so the run folder only ever
+            holds the winner (keeps post-batch cleanup and the manifest honest)."""
+            path = (result or {}).get('path')
+            if not path:
+                return
+            try:
+                Path(path).unlink(missing_ok=True)  # type: ignore[arg-type]
+            except Exception:
+                pass
+
+        def _consider(url: str, source: str, result: Dict[str, Any]) -> bool:
+            """Record the attempt and keep it if it beats what we have.
+
+            Returns True when the result is full text, i.e. nothing can beat it
+            and the caller should stop."""
+            nonlocal best, best_url, last_error
             attempts.append({
                 'url': url,
                 'source': source,
                 'downloaded': bool(result.get('downloaded')),
+                'content_quality': result.get('content_quality'),
                 'error': result.get('error'),
             })
+            if not result.get('downloaded'):
+                last_error = result.get('error') or last_error
+                return False
+            better = best is None or (
+                content_quality_rank(result.get('content_quality'))
+                > content_quality_rank(best.get('content_quality'))
+            )
+            if better:
+                _discard(best)
+                best, best_url = result, url
+            else:
+                _discard(result)
+            return bool(result.get('judgeable'))
 
         # 1. Direct URL already known
         if citation_details and citation_details.url:
             logger.info(f"Downloading from known URL: {citation_details.url}")
-            direct = self.download(citation_details.url, citation_id)
-            _record(citation_details.url, 'direct', direct)
-            if direct['downloaded']:
-                direct['attempts'] = attempts
-                direct['winning_url'] = citation_details.url
-                return direct
-            logger.info("  Direct URL failed; falling back to open-access resolution.")
+            fetches += 1
+            if _consider(
+                citation_details.url, 'direct',
+                self.download(citation_details.url, citation_id, filename_suffix="_c1"),
+            ):
+                return self._finish(best, best_url, attempts)
+            logger.info("  Direct URL was not full text; continuing resolution.")
 
-        # 2. Try open-access resolution — iterate over ranked candidates.
+        # 2. Open-access resolution — iterate over ranked candidates.
         logger.info(f"Resolving citation [{citation_id}]: {raw_citation_text[:80]}...")
-        candidates = self._paper_finder.find_urls(raw_citation_text)
-        last_error: Optional[str] = None
-        for i, url in enumerate(candidates, 1):
-            logger.info(f"  Attempt {i}/{len(candidates)}: {url}")
-            result = self.download(url, citation_id)
-            _record(url, 'open_access', result)
-            if result['downloaded']:
-                result['attempts'] = attempts
-                result['winning_url'] = url
-                return result
-            last_error = result.get('error')
+        known_doi = getattr(citation_details, "doi", None) if citation_details else None
+        candidates = self._paper_finder.find_urls(raw_citation_text, known_doi=known_doi)
+        tried_urls = {a['url'] for a in attempts}
+        for url in candidates:
+            if fetches >= MAX_CANDIDATES_PER_BATCH:
+                logger.info(
+                    f"  Candidate cap ({MAX_CANDIDATES_PER_BATCH}) reached; "
+                    f"keeping best so far."
+                )
+                break
+            if url in tried_urls:
+                continue
+            tried_urls.add(url)
+            fetches += 1
+            logger.info(f"  Attempt {fetches}: {url}")
+            if _consider(
+                url, 'open_access',
+                self.download(url, citation_id, filename_suffix=f"_c{fetches}"),
+            ):
+                return self._finish(best, best_url, attempts)
 
-        # 3. Institutional cookie fallback — try CrossRef landing page URL if we have it
+        # 3. Institutional cookie fallback — try the DOI landing page if we have one.
+        #    Only worth doing when we still lack full text.
         if INSTITUTIONAL_COOKIES:
-            doi_match = __import__('re').search(
+            doi_match = re.search(
                 r'\b(10\.\d{4,}/\S+?)(?:[,\s\])}]|$)', raw_citation_text
             )
             if doi_match:
@@ -390,78 +490,83 @@ class TextDownloader:
                 logger.info(f"Trying institutional cookies on landing page: {landing}")
                 content = self._paper_finder.fetch_with_cookies(landing)
                 if content:
-                    filename = f"citation_{citation_id}_text.html"
-                    local_path = self.output_dir / filename
-                    local_path.write_bytes(content)
-                    text_content = self._extract_html_text(content.decode("utf-8", errors="replace"))
+                    fetches += 1
+                    result = self._process_bytes(
+                        content, landing, citation_id,
+                        filename_suffix=f"_c{fetches}",
+                    )
+                    if _consider(landing, 'institutional_cookies', result):
+                        return self._finish(best, best_url, attempts)
+                else:
                     attempts.append({
                         'url': landing,
                         'source': 'institutional_cookies',
-                        'downloaded': True,
-                        'error': None,
+                        'downloaded': False,
+                        'content_quality': None,
+                        'error': 'fetch_with_cookies returned empty content',
                     })
-                    return {
-                        'downloaded': True,
-                        'format': 'html',
-                        'path': str(local_path),
-                        'text_content': text_content,
-                        'error': None,
-                        'attempts': attempts,
-                        'winning_url': landing,
-                    }
-                attempts.append({
-                    'url': landing,
-                    'source': 'institutional_cookies',
-                    'downloaded': False,
-                    'error': 'fetch_with_cookies returned empty content',
-                })
 
-        # 4. Playwright browser fallback — retry each previously-attempted URL
-        # through the authenticated browser context. Because the orchestrator
-        # opens paywall domains for manual login before the pipeline starts and
-        # then bridges those cookies into both requests sessions and the browser
+        # 4. Playwright browser fallback — retry previously-attempted URLs through
+        # the authenticated browser context. Because the orchestrator opens
+        # paywall domains for manual login before the pipeline starts and then
+        # bridges those cookies into both requests sessions and the browser
         # context, ``download_url`` here fetches with the user's actual session.
-        # Capped at 5 URLs to avoid runaway retries on batches whose candidate
-        # list is long.
+        # Capped at 5 URLs to avoid runaway retries.
         browser_searcher = getattr(self._paper_finder, "browser_searcher", None)
         if browser_searcher is not None and attempts:
             seen: set[str] = set()
-            tried = 0
+            browser_tries = 0
             for a in attempts[:]:  # snapshot — we append to attempts inside the loop
                 u = a.get("url")
                 if not u or u in seen:
                     continue
                 seen.add(u)
-                if tried >= 5:
+                if browser_tries >= 5:
                     break
-                tried += 1
-                logger.info(f"  Browser retry {tried}: {u}")
+                browser_tries += 1
+                logger.info(f"  Browser retry {browser_tries}: {u}")
                 body = browser_searcher.download_url(u)
                 if not body:
                     attempts.append({
                         'url': u,
                         'source': 'browser',
                         'downloaded': False,
+                        'content_quality': None,
                         'error': 'browser fetch returned no content',
                     })
                     continue
-                result = self._process_bytes(body, u, citation_id)
-                attempts.append({
-                    'url': u,
-                    'source': 'browser',
-                    'downloaded': bool(result.get('downloaded')),
-                    'error': result.get('error'),
-                })
-                if result['downloaded']:
-                    result['attempts'] = attempts
-                    result['winning_url'] = u
-                    return result
+                fetches += 1
+                result = self._process_bytes(
+                    body, u, citation_id, filename_suffix=f"_c{fetches}",
+                )
+                if _consider(u, 'browser', result):
+                    return self._finish(best, best_url, attempts)
+
+        if best is not None:
+            logger.warning(
+                f"  Best available source for [{citation_id}] is "
+                f"{best.get('content_quality')} — not full text."
+            )
+            return self._finish(best, best_url, attempts)
 
         err = last_error or 'No URL found via open-access APIs, institutional cookies, or browser'
         return {
             'downloaded': False, 'format': None, 'path': None, 'text_content': None,
+            'content_quality': None, 'content_signals': None, 'judgeable': False,
             'error': err, 'attempts': attempts, 'winning_url': None,
         }
+
+    @staticmethod
+    def _finish(
+        best: Optional[Dict[str, Any]],
+        best_url: Optional[str],
+        attempts: list[dict],
+    ) -> Dict[str, Any]:
+        """Attach the cascade to the winning result."""
+        result = dict(best or {})
+        result['attempts'] = attempts
+        result['winning_url'] = best_url
+        return result
 
     def delete_text(self, filename: str) -> Dict[str, Any]:
         """

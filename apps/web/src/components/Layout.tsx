@@ -24,6 +24,9 @@ export function Layout() {
               <Link to={`/runs/${runId}/sources`} className="hover:text-gray-900">
                 Sources
               </Link>
+              <Link to={`/runs/${runId}/references`} className="hover:text-gray-900">
+                References
+              </Link>
               <Link to={`/runs/${runId}/console`} className="hover:text-gray-900">
                 Console
               </Link>
@@ -33,6 +36,9 @@ export function Layout() {
           <nav className="flex gap-4 text-sm text-gray-600">
             <Link to="/compare" className="hover:text-gray-900">
               Compare
+            </Link>
+            <Link to="/benchmark" className="hover:text-gray-900">
+              Benchmark
             </Link>
             <Link to="/config" className="hover:text-gray-900">
               Config

@@ -52,8 +52,9 @@ export function RunsIndex() {
               <th className="px-3 py-2">Timestamp</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Claims</th>
-              <th className="px-3 py-2">Pass rate</th>
-              <th className="px-3 py-2">Unresolved</th>
+              <th className="px-3 py-2" title="Claims ASV could check against a source, over total claims. This is the number source-acquisition work moves.">Checkable</th>
+              <th className="px-3 py-2" title="Substantiated over checkable claims — not over all claims.">Substantiated</th>
+              <th className="px-3 py-2" title="References not found in Crossref, OpenAlex, Europe PMC or PubMed, and retracted sources.">Bibliography</th>
               <th className="px-3 py-2">Elapsed</th>
               <th className="px-3 py-2">Cost</th>
               <th className="px-3 py-2" />
@@ -74,8 +75,33 @@ export function RunsIndex() {
                   </span>
                 </td>
                 <td className="px-3 py-2">{r.total_claims ?? "—"}</td>
-                <td className="px-3 py-2">{pct(r.pass_rate)}</td>
-                <td className="px-3 py-2">{pct(r.unresolved_source_rate)}</td>
+                <td className="px-3 py-2">{pct(r.checkable_rate)}</td>
+                <td className="px-3 py-2">{pct(r.substantiation_rate)}</td>
+                <td className="px-3 py-2 text-xs">
+                  {r.reference_audit ? (
+                    <span>
+                      {r.reference_audit.not_found_in_indexes > 0 && (
+                        <span className="text-red-700">
+                          {r.reference_audit.not_found_in_indexes} not found
+                        </span>
+                      )}
+                      {r.reference_audit.not_found_in_indexes > 0 &&
+                        r.reference_audit.retracted > 0 &&
+                        " · "}
+                      {r.reference_audit.retracted > 0 && (
+                        <span className="text-rose-700">
+                          {r.reference_audit.retracted} retracted
+                        </span>
+                      )}
+                      {r.reference_audit.not_found_in_indexes === 0 &&
+                        r.reference_audit.retracted === 0 && (
+                          <span className="text-gray-400">clean</span>
+                        )}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                </td>
                 <td className="px-3 py-2">{seconds(r.total_elapsed_seconds)}</td>
                 <td className="px-3 py-2">{usd(r.cost?.total_cost)}</td>
                 <td className="px-3 py-2 text-right">

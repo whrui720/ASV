@@ -35,6 +35,15 @@ logger = logging.getLogger(__name__)
 _DOI_RE = re.compile(r'\b(10\.\d{4,}/\S+?)(?:[,\s\])}]|$)', re.IGNORECASE)
 
 
+def _clean_doi(doi: Optional[str]) -> Optional[str]:
+    """Strip a doi.org prefix and trailing punctuation from a DOI string."""
+    if not doi:
+        return None
+    doi = str(doi).strip().rstrip(".")
+    doi = re.sub(r"^https?://(dx\.)?doi\.org/", "", doi, flags=re.IGNORECASE)
+    return doi or None
+
+
 def _extract_doi(text: str) -> Optional[str]:
     """Extract first DOI found in raw citation text."""
     if not text:
@@ -87,7 +96,9 @@ class AcademicPaperFinder:
         urls = self.find_urls(raw_citation_text)
         return urls[0] if urls else None
 
-    def find_urls(self, raw_citation_text: str) -> list[str]:
+    def find_urls(
+        self, raw_citation_text: str, known_doi: Optional[str] = None
+    ) -> list[str]:
         """
         Return a ranked list of candidate URLs. Repository/PDF mirrors (PMC, arXiv,
         institutional repos) are surfaced ahead of publisher landing pages so callers
@@ -104,11 +115,21 @@ class AcademicPaperFinder:
 
         candidates: list[str] = []
 
-        # 1. Regex-extracted DOI (cheapest, no LLM cost).
-        doi = _extract_doi(raw_citation_text)
+        # 0. A DOI already confirmed by the Tier 0.6 bibliography audit, when the
+        #    caller has one. The test corpus carries zero inline DOIs across 253
+        #    references, so without this the resolver grinds through the whole
+        #    cascade rediscovering what the audit already established.
+        doi = _clean_doi(known_doi)
         if doi:
-            logger.info(f"  DOI extracted (regex): {doi}")
+            logger.info(f"  DOI supplied by reference audit: {doi}")
             candidates = self._resolve_from_doi(doi)
+
+        # 1. Regex-extracted DOI (cheapest, no LLM cost).
+        if not candidates:
+            doi = _extract_doi(raw_citation_text)
+            if doi:
+                logger.info(f"  DOI extracted (regex): {doi}")
+                candidates = self._resolve_from_doi(doi)
 
         # 2. LLM-parsed DOI (when regex missed it).
         if not candidates and parsed.get("doi") and parsed["doi"] != doi:
@@ -199,13 +220,22 @@ class AcademicPaperFinder:
 
         prompt = (
             "Parse the following bibliography citation into structured fields. "
-            "Return JSON with keys: title, first_author, year, journal, doi. "
+            "Return JSON with keys: title, first_author, year, journal, volume, "
+            "first_page, last_page, doi, type. "
             "Use null for any field you cannot determine. The title should be the "
             "paper/article title only (no author or journal). first_author is the "
-            "surname of the first listed author. year is a 4-digit integer or null.\n\n"
+            "surname of the first listed author. year is a 4-digit integer or null. "
+            "type is one of: journal-article, book, chapter, conference-paper, "
+            "conference-abstract, preprint, dataset, thesis, report, webpage, "
+            "personal-communication.\n"
+            "Reference strings extracted from PDFs often lose the spaces at field "
+            "boundaries (e.g. 'J Virol1999; 73: 2181' means journal 'J Virol', year "
+            "1999, volume 73, first page 2181) — split them correctly.\n\n"
             f"Citation: {raw_text}\n\n"
             'Example output: {"title": "Gene delivery using herpes simplex virus vectors", '
-            '"first_author": "Burton", "year": 2002, "journal": "DNA Cell Biol", "doi": null}'
+            '"first_author": "Burton", "year": 2002, "journal": "DNA Cell Biol", '
+            '"volume": "21", "first_page": "915", "last_page": "936", "doi": null, '
+            '"type": "journal-article"}'
         )
         try:
             result = self.llm_client.call_llm(

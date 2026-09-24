@@ -14,7 +14,37 @@ export type ConfigStatus = components["schemas"]["ConfigStatus"];
 export type CompareResult = components["schemas"]["CompareResult"];
 export type RunCreateResponse = components["schemas"]["RunCreateResponse"];
 export type RetryResponse = components["schemas"]["RetryResponse"];
-export type Verdict = "passed" | "failed" | "unresolved_source" | "skipped";
+// Tier 0.2 ontology. Kept in sync with src/asv/core/verdicts.py; the generated
+// `types.ts` carries the same unions, these aliases just give them short names.
+export type Verdict =
+  | "substantiated"
+  | "partially_substantiated"
+  | "not_substantiated"
+  | "contradicted"
+  | "not_checkable";
+export type NotCheckableReason =
+  | "no_source_available"
+  | "original_contribution"
+  | "source_not_resolved"
+  | "source_download_failed"
+  | "abstract_only"
+  | "paywall_interstitial"
+  | "content_rejected"
+  | "retrieval_empty"
+  | "evidence_unverifiable"
+  | "reference_not_found"
+  | "reference_unverified"
+  | "unresolvable_by_design"
+  | "validation_error";
+export type ContentQuality =
+  | "full_text"
+  | "abstract_only"
+  | "paywall_interstitial"
+  | "rejected";
+export type ReferenceCheckRow = components["schemas"]["ReferenceCheckRow"];
+export type GoldPair = components["schemas"]["GoldPair"];
+export type GoldStats = components["schemas"]["GoldStats"];
+export type LabelRequest = components["schemas"]["LabelRequest"];
 export type RunStatus = "queued" | "running" | "awaiting_login" | "complete" | "failed";
 
 const BASE = "/api";
@@ -34,6 +64,29 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listRuns: () => req<RunSummaryRow[]>("/runs"),
+  // Tier 0.6 bibliography audit: every reference in the paper, whether the
+  // free indexes found it, and whether it has been retracted.
+  listReferences: (runId: string) =>
+    req<ReferenceCheckRow[]>(`/runs/${runId}/references`),
+
+  // Tier 0.4 gold set. Not scoped to a run: the benchmark spans runs, and
+  // lives in the repo rather than in runs/.
+  benchmarkStats: (name = "gold") => req<GoldStats>(`/benchmark/${name}/stats`),
+  benchmarkPairs: (
+    params: { unlabelled_only?: boolean; needs_second_pass?: boolean },
+    name = "gold"
+  ) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined) qs.set(k, String(v));
+    });
+    return req<GoldPair[]>(`/benchmark/${name}/pairs?${qs.toString()}`);
+  },
+  benchmarkLabel: (body: LabelRequest, name = "gold") =>
+    req<GoldPair>(`/benchmark/${name}/label`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getRun: (runId: string) => req<RunDetail>(`/runs/${runId}`),
   deleteRun: (runId: string) => req<{ ok: boolean }>(`/runs/${runId}`, { method: "DELETE" }),
   listPdfs: () => req<string[]>("/pdfs"),

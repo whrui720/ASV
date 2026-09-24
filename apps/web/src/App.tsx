@@ -6,6 +6,8 @@ import { ClaimsExplorer } from "./routes/ClaimsExplorer";
 import { ClaimDetailDrawer } from "./components/ClaimDetailDrawer";
 import { PaperView } from "./routes/PaperView";
 import { SourcesView } from "./routes/SourcesView";
+import { ReferencesView } from "./routes/ReferencesView";
+import { BenchmarkAnnotator } from "./routes/BenchmarkAnnotator";
 import { LiveConsole } from "./routes/LiveConsole";
 import { ComparePage } from "./routes/ComparePage";
 import { ConfigPage } from "./routes/ConfigPage";
@@ -17,6 +19,7 @@ export default function App() {
         <Route index element={<RunsIndex />} />
         <Route path="compare" element={<ComparePage />} />
         <Route path="config" element={<ConfigPage />} />
+        <Route path="benchmark" element={<BenchmarkAnnotator />} />
         <Route path="runs/:runId" element={<RunOverview />} />
         <Route path="runs/:runId/claims" element={<ClaimsExplorer />}>
           <Route path=":claimId" element={<ClaimDetailDrawer />} />
@@ -27,6 +30,7 @@ export default function App() {
           <Route path=":claimId" element={<ClaimDetailDrawer />} />
         </Route>
         <Route path="runs/:runId/sources" element={<SourcesView />} />
+        <Route path="runs/:runId/references" element={<ReferencesView />} />
         <Route path="runs/:runId/console" element={<LiveConsole />} />
       </Route>
     </Routes>

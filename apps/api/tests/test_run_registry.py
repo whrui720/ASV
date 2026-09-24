@@ -33,9 +33,41 @@ def test_completed_run_infers_complete_without_status_json(sample_run_paths):
 def test_run_detail_has_consistent_verdict_breakdown(sample_run_paths):
     detail = run_registry.get_run_detail(sample_run_paths)
     total_from_breakdown = sum(
-        vb.passed + vb.failed + vb.unresolved_source + vb.skipped for vb in detail.verdict_breakdown
+        vb.substantiated
+        + vb.partially_substantiated
+        + vb.not_substantiated
+        + vb.contradicted
+        + vb.not_checkable
+        for vb in detail.verdict_breakdown
     )
-    assert total_from_breakdown == detail.steps["qualitative_uncited"].count + \
-        detail.steps["quantitative_uncited"].count + \
-        detail.steps["qualitative_cited"].count + \
-        detail.steps["quantitative_cited"].count
+    assert total_from_breakdown == sum(
+        detail.steps[s].count for s in (
+            "qualitative_uncited", "quantitative_uncited",
+            "qualitative_cited", "quantitative_cited",
+        )
+    )
+
+
+def test_not_checkable_reasons_account_for_every_abstention(sample_run_paths):
+    """Tier 0.2: an abstention without a reason code is useless to a reader —
+    "paywalled" and "the reference does not exist" imply opposite actions."""
+    detail = run_registry.get_run_detail(sample_run_paths)
+    abstentions = sum(vb.not_checkable for vb in detail.verdict_breakdown)
+    assert sum(detail.not_checkable_reasons.values()) == abstentions
+
+
+def test_substantiation_rate_is_over_checkable_claims(sample_run_paths):
+    """The old pass_rate divided by passed+failed, which put 217 unsourced
+    plausibility passes in its numerator and reported 73%. The replacement is
+    computed over claims that could actually be checked."""
+    row = next(
+        r for r in run_registry.list_runs() if r.run_id == sample_run_paths.root.name
+    )
+    checkable = (
+        row.substantiated + row.partially_substantiated
+        + row.not_substantiated + row.contradicted
+    )
+    assert row.total_claims == checkable + row.not_checkable
+    if checkable:
+        assert row.substantiation_rate == round(row.substantiated / checkable, 3)
+    assert row.checkable_rate == round(checkable / row.total_claims, 3)

@@ -175,6 +175,10 @@ Generate ONLY the Python code, no explanations or markdown formatting.
                 'passed': result_data.get('passed', False),
                 'confidence': float(result_data.get('confidence', 0.5)),
                 'explanation': result_data.get('explanation', 'No explanation provided'),
+                # Tier 0.5: the executed script's own output is the evidence for
+                # a dataset-backed verdict — deterministic, reproducible, and
+                # checkable by re-running the script next to it.
+                'raw_output': json_str,
                 'error': None
             }
 

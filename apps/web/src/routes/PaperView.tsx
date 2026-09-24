@@ -106,7 +106,7 @@ export function PaperView() {
               >
                 <span
                   className="inline-block w-2 h-2 rounded-full mr-1 align-middle"
-                  style={{ backgroundColor: VERDICT_DOT[c.result?.verdict ?? "skipped"] }}
+                  style={{ backgroundColor: VERDICT_DOT[c.result?.verdict ?? "not_checkable"] }}
                 />
                 {c.text.slice(0, 90)}
               </button>

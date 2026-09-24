@@ -108,6 +108,18 @@ class RunPaths:
     def found_text_sources_json(self) -> Path:
         return self.sourcefinder / "found_text_sources.json"
 
+    def reference_checks_json(self) -> Path:
+        """Tier 0.6 — the bibliography audit: does each cited reference exist,
+        and has it been retracted? Covers *every* reference in the paper, not
+        just the ones with claims attached."""
+        return self.sourcefinder / "reference_checks.json"
+
+    def results_schema_json(self) -> Path:
+        """Marks the shape of ``validation_results/*.json`` for this run, so the
+        API can badge pre-Tier-0 runs as legacy rather than silently
+        misreporting them (TIER0_PLAN.md §9)."""
+        return self.validation_results / "_schema.json"
+
     def run_summary_json(self) -> Path:
         return self.final_output / "run_summary.json"
 

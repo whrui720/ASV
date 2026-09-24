@@ -5,6 +5,8 @@ import { StepCards } from "../components/StepCards";
 import { VerdictBreakdownChart } from "../components/VerdictBreakdownChart";
 import { ResolutionFunnelChart } from "../components/ResolutionFunnelChart";
 import { AwaitingLoginBanner } from "../components/AwaitingLoginBanner";
+import { ReferenceAuditCard } from "../components/ReferenceAuditCard";
+import { CheckableSummary } from "../components/CheckableSummary";
 import { useRunEvents } from "../hooks/useRunEvents";
 import { seconds, timestampLabel, usd } from "../lib/format";
 
@@ -51,6 +53,12 @@ export function RunOverview() {
           This run is in progress — this page updates live.{" "}
           {liveEvents.connected ? "" : "(reconnecting…)"}
         </div>
+      )}
+
+      <CheckableSummary run={run} />
+
+      {run.reference_audit && (
+        <ReferenceAuditCard runId={runId!} audit={run.reference_audit} />
       )}
 
       <StepCards steps={run.steps} />

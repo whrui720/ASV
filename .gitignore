@@ -153,3 +153,11 @@ cython_debug/
 apps/web/node_modules/
 apps/web/dist/
 apps/api/openapi.json
+
+# Tier 0 calibration + benchmark artifacts.
+# The re-fetch cache and the per-timestamp eval runs are reproducible byproducts;
+# the hand labels and benchmarks/results/latest/ are the published artifacts and
+# ARE tracked -- VALUE_PROPOSITION.md treats the metrics as something to publish,
+# and a number nobody can find is not published.
+calibration/cache/
+benchmarks/results/20*/

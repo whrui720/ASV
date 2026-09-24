@@ -60,7 +60,30 @@ export function ClaimsTable({ rows, selected, onToggleSelect, onToggleSelectAll 
       id: "verdict",
       header: "Verdict",
       cell: ({ row }) =>
-        row.original.result ? <VerdictBadge verdict={row.original.result.verdict} /> : "—",
+        row.original.result ? (
+          <VerdictBadge
+            verdict={row.original.result.verdict}
+            reason={row.original.result.not_checkable_reason}
+            legacy={row.original.result.legacy}
+          />
+        ) : (
+          "—"
+        ),
+    },
+    {
+      id: "evidence",
+      header: "Evidence",
+      // Tier 0.5: a finding with no quoted span is not shippable, so showing
+      // the count here makes the difference between a checkable finding and an
+      // abstention visible without opening the row.
+      cell: ({ row }) => {
+        const n = row.original.result?.evidence?.length ?? 0;
+        return n > 0 ? (
+          <span className="text-xs text-gray-700">{n} quote{n === 1 ? "" : "s"}</span>
+        ) : (
+          <span className="text-xs text-gray-400">—</span>
+        );
+      },
     },
     {
       id: "confidence",

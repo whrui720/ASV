@@ -3,7 +3,8 @@ import { Outlet, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ClaimsTable } from "../components/ClaimsTable";
-import { GROUP_LABEL } from "../lib/verdict";
+import { GROUP_LABEL, REASON_LABEL, VERDICT_LABEL } from "../lib/verdict";
+import type { NotCheckableReason, Verdict } from "../api/client";
 
 const PAGE_SIZE = 50;
 
@@ -17,6 +18,8 @@ export function ClaimsExplorer() {
   const filters = {
     group: params.get("group") ?? undefined,
     verdict: params.get("verdict") ?? undefined,
+    not_checkable_reason: params.get("not_checkable_reason") ?? undefined,
+    citation_id: params.get("citation_id") ?? undefined,
     claim_type: params.get("claim_type") ?? undefined,
     method: params.get("method") ?? undefined,
     q: params.get("q") ?? undefined,
@@ -51,7 +54,17 @@ export function ClaimsExplorer() {
   const selectedUnresolvedCitations = useMemo(() => {
     const ids = new Set<string>();
     rows.forEach((r) => {
-      if (selected.has(r.claim_id) && r.result?.verdict === "unresolved_source" && r.batch) {
+      // Retry is only meaningful where the *source* was the problem — not
+      // where the claim simply had no citation, and not where the source was
+      // obtained and judged.
+      const reason = r.result?.not_checkable_reason;
+      const retryable =
+        reason === "source_download_failed" ||
+        reason === "source_not_resolved" ||
+        reason === "paywall_interstitial" ||
+        reason === "abstract_only" ||
+        reason === "content_rejected";
+      if (selected.has(r.claim_id) && retryable && r.batch) {
         ids.add(r.batch.citation_id);
       }
     });
@@ -117,7 +130,19 @@ export function ClaimsExplorer() {
           label="Verdict"
           value={filters.verdict ?? ""}
           onChange={(v) => setFilter("verdict", v)}
-          options={Object.entries(facets.verdict ?? {}).map(([k, n]) => [k, `${k} (${n})`])}
+          options={Object.entries(facets.verdict ?? {}).map(([k, n]) => [
+            k,
+            `${VERDICT_LABEL[k as Verdict] ?? k} (${n})`,
+          ])}
+        />
+        <FilterSelect
+          label="Why not checked"
+          value={filters.not_checkable_reason ?? ""}
+          onChange={(v) => setFilter("not_checkable_reason", v)}
+          options={Object.entries(facets.not_checkable_reason ?? {}).map(([k, n]) => [
+            k,
+            `${REASON_LABEL[k as NotCheckableReason] ?? k} (${n})`,
+          ])}
         />
         <FilterSelect
           label="Type"

@@ -237,7 +237,7 @@ interface ClaimRow {
     verdict: Verdict;
     passed: boolean;
     confidence: number;
-    method: string;                 // truth_table+llm_check | rag_search | python_script
+    method: string;                 // rag_search | python_script | not_checkable
     explanation: string;
     errors: string | null;
     sourcesUsed: string[];

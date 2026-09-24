@@ -7,10 +7,15 @@ The four validation-result files are not homogeneous (§2.1): the two
 allowed to matter — everything downstream (routers, frontend) sees a flat
 ``ClaimRow`` list.
 
-``verdict`` is the key derived field. ``passed`` alone conflates "the source
-was obtained and the claim did not hold up" with "we never got the source" —
-splitting them (``unresolved_source`` as a third state) is what makes the
-qual-cited/quant-cited failure rates in a typical run honest.
+Since Tier 0.2, ``verdict`` is **not** derived here — the pipeline persists it
+at judgment time, because the distinctions that matter (contradicted vs merely
+unsupported; paywalled vs abstract-only vs never-resolved) are only knowable
+where the judgment happens and are destroyed by the time a result file is read.
+
+What remains here is the *legacy* path: eight run folders predate Tier 0 and
+are the evidence base for the project's published numbers, so they are never
+rewritten. Any result entry without a ``verdict`` key is mapped onto the new
+ontology on read and flagged ``legacy: true`` so the UI can badge it.
 """
 
 from __future__ import annotations
@@ -20,10 +25,21 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from asv.core.models import ClaimObject
+from asv.core.models import ClaimObject, ReferenceCheck, RESULT_SCHEMA_VERSION
 from asv.core.run_paths import RunPaths
+from asv.core.verdicts import ContentQuality, NotCheckableReason, Verdict
 
 from apps.api.schemas import BatchRef, CitationRef, ClaimRow, LocationRef, ResultRef
+
+#: Legacy ``validation_method`` values whose results came from asking a model
+#: whether a sentence sounded plausible. On the reference run these accounted
+#: for 247 of 306 claims and 217 of 224 "passes", with ``sources_used: []``.
+#: Rendering them as ``substantiated`` would reproduce, in the new UI, exactly
+#: the claim Tier 0 exists to stop making — so they read as abstentions, with
+#: the original boolean preserved in ``validation_metadata.legacy_passed``.
+_LEGACY_PLAUSIBILITY_METHODS = frozenset({
+    "truth_table+llm_check", "truth_table+llm_only", "llm_check",
+})
 
 _RESULT_FILES: Dict[str, str] = {
     "qual_uncited": "qualitative_uncited_results.json",
@@ -54,18 +70,42 @@ def _mtime(path: Path) -> float:
 
 
 def _combined_mtime(run_paths: RunPaths) -> float:
-    paths = [run_paths.claims_json()] + [
+    paths = [run_paths.claims_json(), run_paths.reference_checks_json()] + [
         run_paths.validation_results / fname for fname in _RESULT_FILES.values()
     ]
     return max((_mtime(p) for p in paths), default=0.0)
 
 
-def _derive_verdict(method: str, passed: bool, batch_download_successful: Optional[bool]) -> str:
+def schema_version(run_paths: RunPaths) -> int:
+    """1 for pre-Tier-0 run folders, 2 once verdicts are persisted."""
+    marker = load_json(run_paths.results_schema_json(), None)
+    if isinstance(marker, dict):
+        try:
+            return int(marker.get("schema_version", 1))
+        except (TypeError, ValueError):
+            return 1
+    return 1
+
+
+def _legacy_verdict(
+    method: str, passed: bool, batch_download_successful: Optional[bool]
+) -> Tuple[Verdict, Optional[NotCheckableReason]]:
+    """Map a pre-Tier-0 result onto the current ontology.
+
+    Deliberately conservative in one place: rows produced by the plausibility
+    path become abstentions rather than ``substantiated``, because that is what
+    they actually were. The raw run files are untouched — this only changes how
+    a historical run renders, and it renders behind a "legacy run" badge.
+    """
+    if method in _LEGACY_PLAUSIBILITY_METHODS:
+        return Verdict.NOT_CHECKABLE, NotCheckableReason.NO_SOURCE_AVAILABLE
     if method == "source_not_found":
-        return "unresolved_source"
+        return Verdict.NOT_CHECKABLE, NotCheckableReason.SOURCE_NOT_RESOLVED
     if batch_download_successful is False:
-        return "unresolved_source"
-    return "passed" if passed else "failed"
+        return Verdict.NOT_CHECKABLE, NotCheckableReason.SOURCE_DOWNLOAD_FAILED
+    if passed:
+        return Verdict.SUBSTANTIATED, None
+    return Verdict.NOT_SUBSTANTIATED, None
 
 
 def load_manifest_by_citation(path: Path) -> Dict[str, dict]:
@@ -81,21 +121,46 @@ def load_manifest_by_citation(path: Path) -> Dict[str, dict]:
     return out
 
 
-def _result_ref(
-    *, method: str, confidence: float, passed: bool, explanation: str,
-    errors: Optional[str], sources_used: List[str], validated_at: Optional[str],
-    validation_metadata: Optional[dict], batch_download_successful: Optional[bool],
-) -> ResultRef:
+def _result_ref(entry: dict, batch_download_successful: Optional[bool]) -> ResultRef:
+    """Normalise one raw result entry, whichever schema wrote it."""
+    method = entry.get("validation_method", "")
+    metadata = entry.get("validation_metadata")
+
+    if "verdict" in entry:
+        verdict = Verdict(entry["verdict"])
+        raw_reason = entry.get("not_checkable_reason")
+        reason = NotCheckableReason(raw_reason) if raw_reason else None
+        confidence = entry.get("confidence")
+        legacy = False
+    else:
+        passed = bool(entry.get("passed", False))
+        verdict, reason = _legacy_verdict(method, passed, batch_download_successful)
+        # A confidence that belonged to a verdict we have just downgraded to an
+        # abstention would be actively misleading, so it is dropped from the
+        # rendered row and preserved in metadata instead.
+        confidence = None if verdict == Verdict.NOT_CHECKABLE else entry.get("confidence")
+        metadata = dict(metadata or {})
+        metadata["legacy_passed"] = passed
+        metadata["legacy_confidence"] = entry.get("confidence")
+        legacy = True
+
+    raw_quality = entry.get("content_quality")
     return ResultRef(
-        verdict=_derive_verdict(method, passed, batch_download_successful),
-        passed=passed,
+        verdict=verdict,
+        not_checkable_reason=reason,
+        passed=(verdict == Verdict.SUBSTANTIATED),
         confidence=confidence,
         method=method,
-        explanation=explanation,
-        errors=errors,
-        sources_used=sources_used or [],
-        validated_at=validated_at,
-        validation_metadata=validation_metadata,
+        explanation=entry.get("explanation", ""),
+        evidence=entry.get("evidence", []) or [],
+        source_url=entry.get("source_url"),
+        content_quality=ContentQuality(raw_quality) if raw_quality else None,
+        flags=entry.get("flags", []) or [],
+        errors=entry.get("errors"),
+        sources_used=entry.get("sources_used", []) or [],
+        validated_at=entry.get("validated_at"),
+        validation_metadata=metadata,
+        legacy=legacy,
     )
 
 
@@ -123,6 +188,7 @@ def build_claim_rows(run_paths: RunPaths, *, use_cache: bool = True) -> List[Cla
 
     dataset_manifest = load_manifest_by_citation(run_paths.datasets_manifest_json())
     text_manifest = load_manifest_by_citation(run_paths.text_sources_manifest_json())
+    ref_checks = load_reference_checks(run_paths)
 
     # index: claim_id -> (group, ResultRef, BatchRef or None)
     index: Dict[str, Tuple[str, ResultRef, Optional[BatchRef]]] = {}
@@ -133,45 +199,36 @@ def build_claim_rows(run_paths: RunPaths, *, use_cache: bool = True) -> List[Cla
 
         if not is_cited:
             for r in raw:
-                result = _result_ref(
-                    method=r.get("validation_method", ""),
-                    confidence=r.get("confidence", 0.0),
-                    passed=r.get("passed", False),
-                    explanation=r.get("explanation", ""),
-                    errors=r.get("errors"),
-                    sources_used=r.get("sources_used", []),
-                    validated_at=r.get("validated_at"),
-                    validation_metadata=r.get("validation_metadata"),
-                    batch_download_successful=None,
-                )
-                index[r["claim_id"]] = (group, result, None)
+                index[r["claim_id"]] = (group, _result_ref(r, None), None)
         else:
             manifest = dataset_manifest if group == "quant_cited" else text_manifest
             for batch in raw:
                 claim_results = batch.get("claim_results", [])
                 sibling_ids = [cr["claim_id"] for cr in claim_results]
                 manifest_entry = manifest.get(str(batch.get("citation_id")), {})
+                raw_quality = (
+                    batch.get("content_quality") or manifest_entry.get("content_quality")
+                )
                 batch_ref = BatchRef(
                     citation_id=str(batch.get("citation_id")),
                     download_successful=bool(batch.get("download_successful")),
+                    judgeable=bool(
+                        batch.get("judgeable", manifest_entry.get("batch_judgeable", False))
+                    ),
+                    content_quality=ContentQuality(raw_quality) if raw_quality else None,
                     winning_url=batch.get("source_url") or manifest_entry.get("winning_url"),
                     format=manifest_entry.get("format"),
                     resolution_attempts=batch.get("resolution_attempts", []),
+                    reference_check=(
+                        ReferenceCheck(**batch["reference_check"])
+                        if batch.get("reference_check") else
+                        ref_checks.get(str(batch.get("citation_id")))
+                    ),
                     notes=batch.get("batch_notes", ""),
                     sibling_claim_ids=sibling_ids,
                 )
                 for cr in claim_results:
-                    result = _result_ref(
-                        method=cr.get("validation_method", ""),
-                        confidence=cr.get("confidence", 0.0),
-                        passed=cr.get("passed", False),
-                        explanation=cr.get("explanation", ""),
-                        errors=cr.get("errors"),
-                        sources_used=cr.get("sources_used", []),
-                        validated_at=cr.get("validated_at"),
-                        validation_metadata=cr.get("validation_metadata"),
-                        batch_download_successful=batch.get("download_successful"),
-                    )
+                    result = _result_ref(cr, batch.get("download_successful"))
                     index[cr["claim_id"]] = (group, result, batch_ref)
 
     rows: List[ClaimRow] = []
@@ -238,10 +295,26 @@ def build_claim_rows(run_paths: RunPaths, *, use_cache: bool = True) -> List[Cla
 
 
 def _skipped_result() -> ResultRef:
+    """A claim present in claims.json but absent from every result file."""
     return ResultRef(
-        verdict="skipped", passed=False, confidence=0.0, method="not_validated",
+        verdict=Verdict.NOT_CHECKABLE,
+        not_checkable_reason=NotCheckableReason.VALIDATION_ERROR,
+        passed=False, confidence=None, method="not_validated",
         explanation="Claim was extracted but never reached a validation step.",
     )
+
+
+def load_reference_checks(run_paths: RunPaths) -> Dict[str, ReferenceCheck]:
+    """Tier 0.6 bibliography audit, keyed by citation_id. Empty for old runs."""
+    data = load_json(run_paths.reference_checks_json(), {})
+    out: Dict[str, ReferenceCheck] = {}
+    for raw in (data.get("checks", []) if isinstance(data, dict) else []):
+        try:
+            check = ReferenceCheck(**raw)
+        except Exception:
+            continue
+        out[str(check.citation_id)] = check
+    return out
 
 
 def get_claim_row(run_paths: RunPaths, claim_id: str) -> Optional[ClaimRow]:

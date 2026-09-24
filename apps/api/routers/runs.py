@@ -11,7 +11,8 @@ from fastapi.responses import StreamingResponse
 
 from apps.api.deps import get_run_paths
 from apps.api.schemas import (
-    CompareResult, CompareRow, RunCreateResponse, RunDetail, RunSummaryRow,
+    CompareResult, CompareRow, ReferenceCheckRow, RunCreateResponse, RunDetail,
+    RunSummaryRow,
 )
 from apps.api.services import job_manager, read_model, run_registry
 from apps.api.services.event_stream import stream_run_events
@@ -61,6 +62,15 @@ def list_pdfs() -> List[str]:
 @router.get("/runs/{run_id}", response_model=RunDetail)
 def get_run(run_paths: RunPaths = Depends(get_run_paths)) -> RunDetail:
     return run_registry.get_run_detail(run_paths)
+
+
+@router.get("/runs/{run_id}/references", response_model=List[ReferenceCheckRow])
+def list_references(run_paths: RunPaths = Depends(get_run_paths)) -> List[ReferenceCheckRow]:
+    """Tier 0.6 bibliography audit: every reference in the paper, whether it was
+    found in the free indexes, and whether it has been retracted.
+
+    Empty for runs made before the audit existed."""
+    return run_registry.list_reference_checks(run_paths)
 
 
 @router.delete("/runs/{run_id}")

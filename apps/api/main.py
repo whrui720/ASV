@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from apps.api.routers import claims, config, paper, runs, sources
+from apps.api.routers import benchmark, claims, config, paper, runs, sources
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _FRONTEND_DIST = _PROJECT_ROOT / "web" / "dist"
@@ -36,7 +36,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    for router in (runs.router, claims.router, sources.router, paper.router, config.router):
+    for router in (
+        runs.router, claims.router, sources.router, paper.router, config.router,
+        benchmark.router,
+    ):
         app.include_router(router)
 
     @app.get("/api/health")

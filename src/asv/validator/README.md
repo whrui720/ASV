@@ -5,8 +5,8 @@ Validation tools used by the ASV pipeline (`src/asv/validator/`). This folder co
 ## Architecture
 
 The validator module provides **validation tools** that:
-1. Check claims against fact-check APIs
-2. Perform LLM-based plausibility checks
+1. Verify claims against retrieved source text
+2. Refuse to verify when there is no usable source — and say why
 3. Expose reusable primitives for orchestration modules
 
 The claim-ordering pipeline and batch orchestration live in `orchestrator/claim_orchestrator.py`.
@@ -17,18 +17,22 @@ Processing order and claim batching are implemented in the `orchestrator` packag
 
 ## Modules
 
-### truth_table_checker.py
-Query Google Fact Check API:
-- Search for existing fact checks
-- Parse ClaimReview schema
-- Interpret textual ratings (True/False/Mixed)
-- Calculate confidence based on rating clarity
-
 ### llm_verifier.py
-Basic LLM plausibility check:
-- Prompt LLM to assess claim plausibility
-- Check scientific accuracy, logical consistency
-- Return `{plausible, confidence, reasoning}`
+Source-grounded verification only. The plausibility check (`verify_claim`) was
+deleted in Tier 0.1 — see `docs/TIER0_PLAN.md` §3. It asked a small model whether
+a sentence *sounded* right, and on the reference corpus produced 217 of 224
+"passes" with `sources_used: []`. The callers and the primitive both went; keeping
+the primitive would have guaranteed its return.
+
+`verify_claim_against_source(claim, source_text, source_url)`:
+- Chunk the source and retrieve the top-K passages by TF-IDF cosine similarity
+- Ask the model for a graded verdict against *those passages only*
+- **Verify every quote it returns actually appears in them** — if none does, the
+  verdict is discarded in favour of `not_checkable(evidence_unverifiable)`
+- Return `{verdict, not_checkable_reason, confidence, explanation, evidence, rag_chunks}`
+
+Nothing clearing the retrieval threshold returns `not_checkable(retrieval_empty)`,
+not a failed claim: no passage was found, which says nothing about the claim.
 
 ## Orchestration Modules
 
@@ -121,8 +125,10 @@ SCRIPT_TIMEOUT = 60
 SCRIPT_TIMEOUT_SECONDS = 30
 SCRIPT_MAX_OUTPUT_LENGTH = 10000
 
-# API keys
-GOOGLE_FACT_CHECK_API_KEY = os.getenv('GOOGLE_FACT_CHECK_API_KEY')
+# Tier 0.5 — evidence verification
+QUOTE_VERIFICATION_THRESHOLD = 92   # rapidfuzz partial_ratio, 0-100
+QUOTE_VERIFICATION_MIN_CHARS = 20   # shorter "quotes" match anything
+SOURCE_VERIFICATION_PROMPT_VERSION = "..."   # recorded on every result
 ```
 
 ### `RAG_SIMILARITY_THRESHOLD` note

@@ -37,6 +37,9 @@ def list_sources(run_paths: RunPaths = Depends(get_run_paths)) -> List[SourceRow
                 deleted_at=e.get("deleted_at"),
                 batch_num_claims=e.get("batch_num_claims", 0),
                 batch_download_successful=e.get("batch_download_successful", False),
+                # Tier 0.3 — a source can download fine and still be an abstract.
+                batch_judgeable=e.get("batch_judgeable", False),
+                content_quality=e.get("content_quality"),
             ))
     return rows
 
