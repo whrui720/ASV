@@ -18,10 +18,73 @@ INSTITUTIONAL_COOKIES = os.getenv("INSTITUTIONAL_COOKIES", "")
 DATA_GOV_API = "https://catalog.data.gov/api/3/action/package_search"
 KAGGLE_API_BASE = "https://www.kaggle.com/api/v1"
 
+# data.gov's CKAN API is gone. SOURCE_ACQUISITION.md F10 flagged it as "returned
+# 404 throughout the 2026-06-22 run"; re-verified 2026-09-23 — /api/3/action/*,
+# /api/1/search and /dataset.json all answer 404 from an API gateway that is not
+# CKAN any more. Left off by default so it does not cost a round trip per claim;
+# set ASV_ENABLE_DATA_GOV=1 to try it again once a working endpoint is known.
+ENABLE_DATA_GOV = os.getenv("ASV_ENABLE_DATA_GOV", "0").strip().lower() in (
+    "1", "true", "yes",
+)
+
+# ---------------------------------------------------------------------------
+# Dataset registries — SOURCE_ACQUISITION.md §6 / F10. These replace the
+# browser scrapes of the same three sites, which returned zero links 100% of
+# the time because they are client-rendered SPAs and the scrape read the empty
+# shell. All four are keyless JSON.
+#
+# Figshare's search is POST with a JSON body; the GET form 404s with a routing
+# error that reads like "no results" if you are not watching for it.
+# ---------------------------------------------------------------------------
+ZENODO_API = "https://zenodo.org/api/records"
+FIGSHARE_SEARCH_API = "https://api.figshare.com/v2/articles/search"
+HUGGINGFACE_DATASETS_API = "https://huggingface.co/api/datasets"
+DATACITE_SEARCH_API = "https://api.datacite.org/dois"
+
 # Open-access API endpoints
 UNPAYWALL_API = "https://api.unpaywall.org/v2"
 SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1"
 CROSSREF_API = "https://api.crossref.org/works"
+
+# ---------------------------------------------------------------------------
+# Resolution breadth — SOURCE_ACQUISITION.md F1.
+# The cascade used to stop at the first resolver that returned anything, which
+# left 32 of 51 batches with exactly one candidate URL. It now pools every
+# resolver and ranks; these two numbers bound the cost of doing that.
+# ---------------------------------------------------------------------------
+#: How many ranked candidates a citation may carry out of resolution. Larger
+#: than MAX_CANDIDATES_PER_BATCH on purpose — the downloader stops early on full
+#: text, so a deeper list costs nothing when the first candidate works.
+MAX_RESOLUTION_CANDIDATES = 10
+#: Below this many candidates, the pool is thin enough to justify paying for a
+#: browser-driven Google Scholar search — if Scholar is enabled at all.
+THIN_CANDIDATE_POOL = 2
+
+# Google Scholar, off by default. SOURCE_ACQUISITION.md F4 measured it returning
+# "no candidate links found" on every query — it is a client-rendered page
+# behind a consent/CAPTCHA interstitial, and Google is explicitly hostile to
+# automation — and recommends retiring it or gating it behind an opt-in flag.
+# Gated rather than deleted because it is the only route left for a reference no
+# index carries. Now that resolution runs as an up-front pass over every
+# citation, leaving it on would mean ~14 browser searches before the run starts,
+# each one slow, CAPTCHA-prone, and historically fruitless.
+ENABLE_GOOGLE_SCHOLAR = os.getenv("ASV_ENABLE_SCHOLAR", "0").strip().lower() in (
+    "1", "true", "yes",
+)
+
+# ---------------------------------------------------------------------------
+# Institutional access — SOURCE_ACQUISITION.md §7.
+# EZproxy access is a hostname rewrite, not a cookie hack:
+#   https://www.sciencedirect.com/…  ->  https://www-sciencedirect-com.PROXY/…
+# Set EZPROXY_HOST to your library's proxy host to enable the rewrite phase.
+# The rewritten URL is fetched through the *browser* context, so the user's SSO
+# session applies and no credential is ever handled by ASV.
+# ---------------------------------------------------------------------------
+EZPROXY_HOST = os.getenv("EZPROXY_HOST", "").strip().strip("/")
+#: Hard cap on proxied fetches per run. Bulk downloading through a library
+#: proxy is exactly what gets institutional access suspended; the user remains
+#: responsible for their library's terms.
+EZPROXY_MAX_PER_RUN = int(os.getenv("EZPROXY_MAX_PER_RUN", "40") or 40)
 
 # ---------------------------------------------------------------------------
 # Tier 0.3 — content-quality classifier thresholds (content_quality.py).

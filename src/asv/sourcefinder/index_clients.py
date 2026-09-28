@@ -26,11 +26,8 @@ reading as an accusation of fabrication.
 from __future__ import annotations
 
 import logging
-import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 
 import requests
 
@@ -48,6 +45,7 @@ from .config import (
     REFCHECK_MIN_INTERVAL_SECONDS,
     REFCHECK_TIMEOUT,
 )
+from .polite_http import PoliteSession
 
 logger = logging.getLogger(__name__)
 
@@ -83,32 +81,28 @@ class IndexResponse:
 
 
 class _PoliteSession:
-    """A ``requests.Session`` with a per-host minimum interval between calls.
+    """Thin adapter onto the shared HTTP layer in ``polite_http``.
 
-    SOURCE_ACQUISITION.md traces the 49% -> 31% acquisition decline on identical
-    input to rate-limit accumulation with no backoff and no politeness. Tier 0.6
-    adds ~700 requests per run, so it ships with the politeness that layer
-    lacks rather than repeating the mistake at greater volume.
+    This class used to own its own per-host clock. That was the right idea in
+    the wrong scope: the audit, the resolver and the downloader each held a
+    private clock, so "one request per host per 0.35s" was really three, and the
+    rate-limit accumulation SOURCE_ACQUISITION.md F7 measured kept happening.
+    The clock, the retry policy and the response cache now live one level down
+    and are shared process-wide, which also means the audit's Crossref and
+    OpenAlex lookups warm the cache the resolver reads from minutes later.
     """
 
     def __init__(self, user_agent: str, min_interval: float = REFCHECK_MIN_INTERVAL_SECONDS):
-        self.session = requests.Session()
-        self.session.headers["User-Agent"] = user_agent
-        self.session.headers["Accept"] = "application/json"
-        self._min_interval = min_interval
-        self._last_call: Dict[str, float] = {}
-        self._lock = threading.Lock()
+        self._http = PoliteSession(
+            user_agent,
+            min_interval=min_interval,
+            default_headers={"Accept": "application/json"},
+        )
+        self.session = self._http.session
 
     def get(self, url: str, **kwargs) -> requests.Response:
-        host = urlparse(url).netloc
-        with self._lock:
-            last = self._last_call.get(host, 0.0)
-            wait = self._min_interval - (time.monotonic() - last)
-            if wait > 0:
-                time.sleep(wait)
-            self._last_call[host] = time.monotonic()
         kwargs.setdefault("timeout", REFCHECK_TIMEOUT)
-        return self.session.get(url, **kwargs)
+        return self._http.get(url, **kwargs)
 
 
 def _first(seq: Any) -> Optional[Any]:

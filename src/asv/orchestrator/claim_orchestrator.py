@@ -24,6 +24,7 @@ from asv.core.run_events import RunEventLogger
 from asv.core.interaction import InteractionHandler, ConsoleInteractionHandler
 from asv.sourcefinder import DatasetFinder, TextFinder, DatasetDownloader, TextDownloader
 from asv.sourcefinder.browser_searcher import BrowserSearcher
+from asv.sourcefinder import polite_http
 from asv.sourcefinder.config import ENABLE_REFERENCE_CHECK, KNOWN_PAYWALL_DOMAINS
 from asv.sourcefinder.reference_verifier import ReferenceVerifier
 from asv.sourcefinder.source_manifest import SourceManifest
@@ -126,7 +127,7 @@ class ClaimOrchestrator:
         if citations:
             self.citations_dict = citations
 
-        self._setup_browser_searcher(claims, citations or {})
+        self._start_browser()
 
         run_start = time.time()
         logger.info(f"\n{'='*60}")
@@ -143,13 +144,30 @@ class ClaimOrchestrator:
         self._audit_references(claims, self.citations_dict)
         step_timings_reference = round(time.time() - t0, 2)
 
+        # Step 0b: resolve every cited source to candidate URLs *before* any
+        # claim is processed. Two things fall out of this ordering, both from
+        # SOURCE_ACQUISITION.md F6:
+        #   1. The paywall-login checkpoint can name the publishers that
+        #      actually came back, instead of grepping bibliography text for
+        #      domain names that were never in it. The measured run logged
+        #      "no known paywall domains detected" and then 403'd 41 times.
+        #   2. Resolution is cached, so the per-batch calls that follow are
+        #      cache hits — this is a reordering, not extra work.
+        t0 = time.time()
+        self._resolution_prepass(claims)
+        step_timings_resolution = round(time.time() - t0, 2)
+        self._paywall_login_checkpoint()
+
         results = {
             "qualitative_uncited": [],
             "quantitative_uncited": [],
             "qualitative_cited": [],
             "quantitative_cited": []
         }
-        step_timings: Dict[str, float] = {"reference_audit": step_timings_reference}
+        step_timings: Dict[str, float] = {
+            "reference_audit": step_timings_reference,
+            "source_resolution": step_timings_resolution,
+        }
 
         # Step 1: Qualitative without citation
         logger.info("Step 1: Processing qualitative claims without citations...")
@@ -220,44 +238,120 @@ class ClaimOrchestrator:
 
         return results
 
-    def _setup_browser_searcher(
-        self, claims: List[ClaimObject], citations: Dict[str, str]
-    ) -> None:
-        """
-        Start a BrowserSearcher and — if any cited sources are behind known paywalls —
-        open those domains in the browser so the user can log in manually before
-        the pipeline begins processing.
+    def _start_browser(self) -> None:
+        """Create the BrowserSearcher and inject it into every finder.
 
-        After this method returns, self.browser_searcher is set and injected into all
-        finders that support it.
+        Lazy: ``BrowserSearcher`` does not launch Chromium until something asks
+        it to, so this costs nothing for a run that never needs a browser. The
+        login checkpoint is a separate step (``_paywall_login_checkpoint``)
+        because it cannot run until resolution has told us which publishers are
+        actually involved.
         """
         self.browser_searcher = BrowserSearcher(llm_client=self.llm_client)
-
-        # Inject into all finders so they use the same authenticated browser session
         self.dataset_finder.browser_searcher = self.browser_searcher
         self.text_finder.browser_searcher = self.browser_searcher
         self.text_downloader._paper_finder.browser_searcher = self.browser_searcher
 
-        # Detect which paywall domains appear in the citation text or claim URLs
-        all_text = " ".join(citations.values())
-        for claim in claims:
-            if claim.citation_details and claim.citation_details.url:
-                all_text += " " + claim.citation_details.url
+    def _resolution_prepass(self, claims: List[ClaimObject]) -> None:
+        """Resolve every distinct cited source to candidate URLs, up front.
 
-        paywall_domains_needed = [
+        The resolver caches per citation string, so the batches later in the run
+        read this back instead of re-resolving. What the pass buys is knowledge
+        we do not otherwise have until it is too late to act on: the set of
+        hosts the paper's bibliography actually points at.
+        """
+        citation_ids: Dict[str, Optional[str]] = {}
+        for claim in claims:
+            cid = str(claim.citation_id or "")
+            if not cid or claim.found_source is not None or cid in citation_ids:
+                continue
+            raw = self.citations_dict.get(cid)
+            if not raw:
+                continue
+            citation_ids[cid] = (
+                claim.citation_details.doi if claim.citation_details else None
+            )
+
+        if not citation_ids:
+            logger.info("No cited sources to resolve — skipping resolution pass")
+            return
+
+        total = len(citation_ids)
+        logger.info(f"\nStep 0b: Resolving {total} cited sources to candidate URLs...")
+        self.events.emit("step_started", step="source_resolution", count=total)
+
+        finder = self.text_downloader._paper_finder
+        with_candidates = 0
+        for i, (cid, doi) in enumerate(citation_ids.items(), 1):
+            try:
+                candidates = finder.find_candidates(
+                    self.citations_dict.get(cid, ""), known_doi=doi
+                )
+            except Exception as e:
+                logger.warning(f"  Resolution failed for [{cid}]: {e}")
+                continue
+            if candidates:
+                with_candidates += 1
+            if i % 10 == 0 or i == total:
+                logger.info(f"  Resolution: {i}/{total} ({with_candidates} with candidates)")
+
+        logger.info(
+            f"  Resolution pass complete: {with_candidates}/{total} citations have "
+            f"at least one candidate URL across {len(finder.resolved_hosts)} host(s)"
+        )
+        self.events.emit(
+            "step_finished", step="source_resolution",
+            citations=total, with_candidates=with_candidates,
+            hosts=len(finder.resolved_hosts),
+        )
+
+    def _paywall_login_checkpoint(self) -> None:
+        """Prompt for manual login, using the hosts resolution actually produced.
+
+        The old trigger substring-matched ``KNOWN_PAYWALL_DOMAINS`` against raw
+        bibliography text. Bibliography entries contain journal names, not URLs,
+        so it essentially never fired: the measured run logged *"No known
+        paywall domains detected in citations"* and then returned 403 forty-one
+        times from wiley.com, cell.com, oup.com and asm.org (F6).
+        """
+        if self.browser_searcher is None:
+            return
+        resolved = self.text_downloader._paper_finder.resolved_hosts
+        paywall_domains_needed = sorted({
             domain for domain in KNOWN_PAYWALL_DOMAINS
-            if domain in all_text.lower()
-        ]
+            for host in resolved
+            if host == domain or host.endswith("." + domain)
+        })
 
         if not paywall_domains_needed:
-            logger.info("No known paywall domains detected in citations — browser ready (no login needed)")
+            logger.info(
+                "No known paywall domains among the resolved source hosts — "
+                "browser ready (no login needed)"
+            )
             return
 
         logger.info(
-            f"Paywall domains detected in citations: {paywall_domains_needed}\n"
+            f"Paywall domains among resolved sources: {paywall_domains_needed}\n"
             "Opening browser tabs for manual login..."
         )
-        self.browser_searcher.open_domains(paywall_domains_needed)
+        try:
+            self.browser_searcher.open_domains(paywall_domains_needed)
+        except Exception as e:
+            # This step runs after the audit and the resolution pass — half an
+            # hour of work on a real corpus. A browser that will not launch
+            # (Playwright not installed, no display, a version mismatch) must
+            # cost us the login, not the run. Everything downstream already
+            # treats an unauthenticated fetch as the normal case.
+            logger.warning(
+                f"Could not open browser tabs for login ({e}) — continuing "
+                f"without institutional access. Publisher fetches will be "
+                f"unauthenticated."
+            )
+            self.browser_searcher = None
+            self.text_downloader._paper_finder.browser_searcher = None
+            self.dataset_finder.browser_searcher = None
+            self.text_finder.browser_searcher = None
+            return
         # Replaces the pipeline's original bare print()/input() — the default
         # ConsoleInteractionHandler behaves identically for the CLI; the web
         # backend injects FileInteractionHandler instead (see interaction.py, B6).
@@ -331,6 +425,12 @@ class ClaimOrchestrator:
             f"Bridged {applied} browser cookies into {len(sessions)} requests sessions "
             f"and paper-finder inst_cookies (domains: {touched_domains})"
         )
+
+        # Our credentials just changed, so nothing cached before this point
+        # describes what we would get now. Without this the resolution pass's
+        # pre-login 403s would be served straight back from disk and the manual
+        # login would silently accomplish nothing.
+        polite_http.bump_auth_generation()
 
     # ------------------------------------------------------------------
     # Stage 0 — bibliography audit (Tier 0.6)

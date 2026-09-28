@@ -257,6 +257,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Credentials
+         * @description The credential catalogue plus what is currently set.
+         *
+         *     Secret values are never returned — only presence and a last-four hint.
+         */
+        get: operations["get_credentials_api_config_credentials_get"];
+        /**
+         * Put Credentials
+         * @description Write credentials to the repo-root ``.env``.
+         *
+         *     Only names in the catalogue are accepted: this endpoint must not become a
+         *     way to set arbitrary environment variables for a subprocess the API then
+         *     launches.
+         *
+         *     A field submitted unchanged arrives as its masked display value (the UI
+         *     shows ``••••••ab12``), which is not a credential and must not be written
+         *     over the real one. Those are dropped here rather than in the browser, since
+         *     the browser is not where that invariant should live.
+         */
+        put: operations["put_credentials_api_config_credentials_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/benchmark/{name}/stats": {
         parameters: {
             query?: never;
@@ -612,6 +647,91 @@ export interface components {
              * @default 0
              */
             total_cost: number;
+        };
+        /**
+         * CredentialField
+         * @description One editable credential, as the config page renders it.
+         *
+         *     ``value`` is the real value for non-secret fields (an email, a proxy
+         *     hostname — a user fixing their own typo needs to see it) and a masked hint
+         *     for secrets. A secret's plaintext never leaves the server.
+         */
+        CredentialField: {
+            /** Name */
+            name: string;
+            /** Label */
+            label: string;
+            /** Group */
+            group: string;
+            /** Help */
+            help: string;
+            /**
+             * Impact
+             * @default
+             */
+            impact: string;
+            /**
+             * Secret
+             * @default true
+             */
+            secret: boolean;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * Placeholder
+             * @default
+             */
+            placeholder: string;
+            /** Signup Url */
+            signup_url?: string | null;
+            /**
+             * Input Type
+             * @default text
+             */
+            input_type: string;
+            /**
+             * Present
+             * @default false
+             */
+            present: boolean;
+            /**
+             * Value
+             * @default
+             */
+            value: string;
+            /**
+             * From Shell
+             * @default false
+             */
+            from_shell: boolean;
+        };
+        /** CredentialsStatus */
+        CredentialsStatus: {
+            /** Fields */
+            fields: components["schemas"]["CredentialField"][];
+            /** Group Order */
+            group_order: string[];
+            /** Group Blurb */
+            group_blurb: {
+                [key: string]: string;
+            };
+            /** Env Path */
+            env_path: string;
+        };
+        /**
+         * CredentialsUpdate
+         * @description Names are validated against the catalogue server-side; an unknown key is
+         *     rejected rather than written, so this endpoint cannot set arbitrary
+         *     environment variables.
+         */
+        CredentialsUpdate: {
+            /** Values */
+            values: {
+                [key: string]: string;
+            };
         };
         /**
          * EvidenceSpan
@@ -1799,6 +1919,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigStatus"];
+                };
+            };
+        };
+    };
+    get_credentials_api_config_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialsStatus"];
+                };
+            };
+        };
+    };
+    put_credentials_api_config_credentials_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialsStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

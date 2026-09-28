@@ -11,6 +11,8 @@ export type RunDetail = components["schemas"]["RunDetail"];
 export type SourceRow = components["schemas"]["SourceRow"];
 export type HighlightQuad = components["schemas"]["HighlightQuad"];
 export type ConfigStatus = components["schemas"]["ConfigStatus"];
+export type CredentialField = components["schemas"]["CredentialField"];
+export type CredentialsStatus = components["schemas"]["CredentialsStatus"];
 export type CompareResult = components["schemas"]["CompareResult"];
 export type RunCreateResponse = components["schemas"]["RunCreateResponse"];
 export type RetryResponse = components["schemas"]["RetryResponse"];
@@ -125,6 +127,18 @@ export const api = {
   getHighlights: (runId: string) => req<HighlightQuad[]>(`/runs/${runId}/highlights`),
 
   getConfig: () => req<ConfigStatus>("/config"),
+
+  // Credentials are write-only over the wire: a GET reports presence plus a
+  // masked hint, never a usable secret. Saving writes the repo-root .env, which
+  // the next run's subprocess re-reads at import — so a key entered here
+  // applies to the next run with no server restart.
+  getCredentials: () => req<CredentialsStatus>("/config/credentials"),
+  saveCredentials: (values: Record<string, string>) =>
+    req<CredentialsStatus>("/config/credentials", {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    }),
+
   compareRuns: (a: string, b: string) =>
     req<CompareResult>(`/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
 

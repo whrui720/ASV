@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from asv.core.verdicts import ContentQuality
+from asv.sourcefinder.fulltext_apis import SourceCandidate
 from asv.sourcefinder.text_downloader import TextDownloader
 
 pytestmark = pytest.mark.unit
@@ -44,7 +45,12 @@ PAYWALL = (
 
 
 class FakeFinder:
-    """Stands in for AcademicPaperFinder."""
+    """Stands in for AcademicPaperFinder.
+
+    The real finder now ranks candidates itself and hands back
+    ``SourceCandidate`` objects, so the downloader consumes the list in the
+    order given. These tests supply that order directly.
+    """
 
     def __init__(self, urls):
         self.urls = urls
@@ -52,6 +58,12 @@ class FakeFinder:
 
     def find_urls(self, raw_citation_text, known_doi=None):
         return list(self.urls)
+
+    def find_candidates(self, raw_citation_text, known_doi=None):
+        return [
+            SourceCandidate(url=u, source="open_access", kind="publisher_landing")
+            for u in self.urls
+        ]
 
 
 def _downloader(tmp_path, pages, urls):

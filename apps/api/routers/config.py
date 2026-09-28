@@ -1,13 +1,31 @@
-"""Config/health: which API keys are present (booleans only, never values) and
-the validator/sourcefinder thresholds currently in effect."""
+"""Config/health: which API keys are present, the thresholds in effect, and —
+new — the editable credential catalogue behind ``/api/config/credentials``.
+
+SOURCE_ACQUISITION.md §3 documents credentials that fail silently when missing.
+The worst is ``UNPAYWALL_EMAIL``: without it the whole Unpaywall step is skipped
+behind a ``logger.debug``, and the 31% acquisition rate that motivated this work
+was measured on a machine whose ``.env`` held exactly one line. Making the
+credentials editable from the UI is therefore an acquisition fix, not a
+convenience.
+
+Secrets are write-only over HTTP. A GET reports presence plus a last-four hint;
+only non-secret fields (an email, a proxy hostname) round-trip their value.
+"""
 
 from __future__ import annotations
 
+import logging
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from apps.api.schemas import ConfigStatus
+from asv.core import credentials as creds
+
+from apps.api.schemas import (
+    ConfigStatus, CredentialField, CredentialsStatus, CredentialsUpdate,
+)
+
+logger = logging.getLogger(__name__)
 from asv.sourcefinder.config import (
     CQ_ABSTRACT_MAX_CHARS,
     CQ_FULL_TEXT_MIN_CHARS,
@@ -37,16 +55,12 @@ router = APIRouter(prefix="/api", tags=["config"])
 
 @router.get("/config", response_model=ConfigStatus)
 def get_config() -> ConfigStatus:
+    # Driven off the same catalogue the config page edits, so a credential can
+    # never be addable-but-unreported (or the reverse).
+    file_values = creds.read_env_file()
     env_keys = {
-        "GEMINI_API_KEY": bool(os.getenv("GEMINI_API_KEY")),
-        # Tier 0.6 uses keyless indexes, but Crossref and OpenAlex route
-        # requests to a faster pool when a contact address is supplied.
-        "UNPAYWALL_EMAIL": bool(os.getenv("UNPAYWALL_EMAIL")),
-        "PUBMED_API_KEY": bool(os.getenv("PUBMED_API_KEY")),
-        "SEMANTIC_SCHOLAR_API_KEY": bool(os.getenv("SEMANTIC_SCHOLAR_API_KEY")),
-        "KAGGLE_USERNAME": bool(os.getenv("KAGGLE_USERNAME")),
-        "KAGGLE_KEY": bool(os.getenv("KAGGLE_KEY")),
-        "INSTITUTIONAL_COOKIES": bool(os.getenv("INSTITUTIONAL_COOKIES")),
+        spec.name: bool(os.getenv(spec.name) or file_values.get(spec.name))
+        for spec in creds.CREDENTIAL_SPECS
     }
     thresholds = {
         "LLM_VERIFIER_CONFIDENCE_THRESHOLD": LLM_VERIFIER_CONFIDENCE_THRESHOLD,
@@ -73,3 +87,82 @@ def get_config() -> ConfigStatus:
         "DOWNLOAD_TIMEOUT": DOWNLOAD_TIMEOUT,
     }
     return ConfigStatus(env_keys=env_keys, thresholds=thresholds)
+
+
+# ---------------------------------------------------------------------------
+# Editable credentials
+# ---------------------------------------------------------------------------
+
+def _to_field(state: creds.CredentialState) -> CredentialField:
+    spec = state.spec
+    return CredentialField(
+        name=spec.name,
+        label=spec.label,
+        group=spec.group,
+        help=spec.help,
+        impact=spec.impact,
+        secret=spec.secret,
+        required=spec.required,
+        placeholder=spec.placeholder,
+        signup_url=spec.signup_url,
+        input_type=spec.input_type,
+        present=state.present,
+        value=state.display_value,
+        from_shell=state.from_shell,
+    )
+
+
+def _status() -> CredentialsStatus:
+    return CredentialsStatus(
+        fields=[_to_field(s) for s in creds.current_state()],
+        group_order=list(creds.GROUP_ORDER),
+        group_blurb=dict(creds.GROUP_BLURB),
+        env_path=str(creds.env_path()),
+    )
+
+
+@router.get("/config/credentials", response_model=CredentialsStatus)
+def get_credentials() -> CredentialsStatus:
+    """The credential catalogue plus what is currently set.
+
+    Secret values are never returned — only presence and a last-four hint.
+    """
+    return _status()
+
+
+@router.put("/config/credentials", response_model=CredentialsStatus)
+def put_credentials(update: CredentialsUpdate) -> CredentialsStatus:
+    """Write credentials to the repo-root ``.env``.
+
+    Only names in the catalogue are accepted: this endpoint must not become a
+    way to set arbitrary environment variables for a subprocess the API then
+    launches.
+
+    A field submitted unchanged arrives as its masked display value (the UI
+    shows ``••••••ab12``), which is not a credential and must not be written
+    over the real one. Those are dropped here rather than in the browser, since
+    the browser is not where that invariant should live.
+    """
+    unknown = sorted(set(update.values) - set(creds.SPECS_BY_NAME))
+    if unknown:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown credential name(s): {', '.join(unknown)}"
+        )
+
+    current = {s.spec.name: s for s in creds.current_state()}
+    to_write: dict[str, str] = {}
+    for name, value in update.values.items():
+        value = (value or "").strip()
+        state = current.get(name)
+        if value and state is not None and state.spec.secret and value == state.display_value:
+            continue  # unchanged masked placeholder echoed back
+        to_write[name] = value
+
+    if not to_write:
+        return _status()
+
+    changed = creds.write_env_values(to_write)
+    creds.apply_to_process(to_write)
+    # Log names only. The values are the whole point of not logging.
+    logger.info("Credentials updated via config page: %s", ", ".join(sorted(changed)) or "(no change)")
+    return _status()

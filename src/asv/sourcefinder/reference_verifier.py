@@ -56,6 +56,7 @@ from .config import (
     REFCHECK_YEAR_TOLERANCE,
     UNINDEXED_REFERENCE_TYPES,
 )
+from .reference_text import normalise_reference
 from .index_clients import BibliographicIndexes, IndexRecord, IndexResponse
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,12 @@ class ReferenceVerifier:
     # ------------------------------------------------------------------
 
     def _verify_uncached(self, citation_id: str, raw_text: str) -> ReferenceCheck:
+        # Repair PDF-extraction damage before anything reads the string (F8).
+        # ``ecitmatch`` is an exact match on journal|year|volume|page|author, so
+        # a reference whose journal ran into its year ("DNA Cell Biol2002")
+        # cannot match, and the fuzzy title comparison downstream is scored
+        # against a title with the journal name welded onto its end.
+        raw_text = normalise_reference(raw_text)
         parsed = self.parse_citation(raw_text) or {}
         if not isinstance(parsed, dict):
             parsed = {}

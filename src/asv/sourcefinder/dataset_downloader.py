@@ -7,12 +7,18 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
-import requests
 
-from .config import DOWNLOAD_TIMEOUT, DATASET_OUTPUT_DIR
+from .config import DOWNLOAD_TIMEOUT, DATASET_OUTPUT_DIR, MAX_FILE_SIZE_MB
+from .polite_http import PoliteSession
 from asv.core.run_paths import RunPaths
 
 logger = logging.getLogger(__name__)
+
+#: A payload with one column is a list, not a dataset a script can cross-check a
+#: statistic against. SOURCE_ACQUISITION.md F10: 12 of 14 dataset "successes" in
+#: the measured run were Crossref bibliographic records that parsed as JSON.
+MIN_TABULAR_COLUMNS = 2
+MIN_TABULAR_ROWS = 1
 
 
 class DatasetDownloader:
@@ -40,7 +46,7 @@ class DatasetDownloader:
         else:
             self.output_dir = Path(DATASET_OUTPUT_DIR)
             self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.session = requests.Session()
+        self.session = PoliteSession()
         # No application/json in Accept: DOI URLs content-negotiate to
         # CrossRef bibliographic metadata when JSON is offered, which downstream
         # code would mistake for a real dataset.
@@ -73,11 +79,13 @@ class DatasetDownloader:
 
         try:
             logger.info(f"Downloading dataset from: {url}")
-            response = self.session.get(url, timeout=DOWNLOAD_TIMEOUT)
-            response.raise_for_status()
+            body, content_type, size_error = self._fetch_bounded(url)
+            if size_error:
+                result['error'] = size_error
+                logger.info(f"  ✗ {size_error}")
+                return result
 
-            content_type = response.headers.get('content-type', '').lower()
-            file_format, detected_kind = self._sniff_format(url, content_type, response.content)
+            file_format, detected_kind = self._sniff_format(url, content_type, body)
 
             if file_format is None:
                 # Non-tabular payload — reject cleanly so caller can iterate.
@@ -91,17 +99,29 @@ class DatasetDownloader:
 
             # Parse from already-downloaded bytes — no second HTTP fetch.
             if file_format == 'csv':
-                df = pd.read_csv(io.BytesIO(response.content))
+                df = pd.read_csv(io.BytesIO(body))
+                shape_error = self._check_frame(df)
+                if shape_error:
+                    result['error'] = shape_error
+                    logger.info(f"  ✗ {shape_error}")
+                    return result
                 df.to_csv(local_path, index=False)
             elif file_format == 'json':
-                data = response.json()
+                data = json.loads(body.decode('utf-8', errors='replace'))
+                shape_error = self._check_json(data)
+                if shape_error:
+                    result['error'] = shape_error
+                    logger.info(f"  ✗ {shape_error}")
+                    return result
                 with open(local_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2)
-            elif file_format == 'xlsx':
-                df = pd.read_excel(io.BytesIO(response.content))
-                df.to_excel(local_path, index=False)
-            elif file_format == 'xls':
-                df = pd.read_excel(io.BytesIO(response.content))
+            elif file_format in ('xlsx', 'xls'):
+                df = pd.read_excel(io.BytesIO(body))
+                shape_error = self._check_frame(df)
+                if shape_error:
+                    result['error'] = shape_error
+                    logger.info(f"  ✗ {shape_error}")
+                    return result
                 df.to_excel(local_path, index=False)
             else:
                 # Should not happen — _sniff_format returns None for unknown formats.
@@ -119,6 +139,87 @@ class DatasetDownloader:
             logger.error(f"✗ Download failed: {e}")
 
         return result
+
+    def _fetch_bounded(self, url: str) -> Tuple[bytes, str, Optional[str]]:
+        """Fetch *url*, refusing to pull more than ``MAX_FILE_SIZE_MB`` into memory.
+
+        ``MAX_FILE_SIZE_MB`` was dead config — declared, documented, referenced
+        nowhere, with the whole body read into memory regardless (F10). The cap
+        is checked twice because a server that omits ``Content-Length`` is
+        exactly the one likely to stream something enormous.
+        """
+        cap = MAX_FILE_SIZE_MB * 1024 * 1024
+        response = self.session.stream_get(url, timeout=DOWNLOAD_TIMEOUT)
+        with response:
+            response.raise_for_status()
+            content_type = response.headers.get('content-type', '').lower()
+
+            declared = response.headers.get('content-length')
+            if declared and declared.isdigit() and int(declared) > cap:
+                return b"", content_type, (
+                    f"Dataset is {int(declared) / 1048576:.0f} MB, over the "
+                    f"{MAX_FILE_SIZE_MB} MB limit"
+                )
+
+            chunks = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=65536):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > cap:
+                    return b"", content_type, (
+                        f"Dataset exceeded the {MAX_FILE_SIZE_MB} MB limit while "
+                        f"downloading"
+                    )
+                chunks.append(chunk)
+        return b"".join(chunks), content_type, None
+
+    @staticmethod
+    def _check_frame(df: "pd.DataFrame") -> Optional[str]:
+        """Reject payloads that parsed but are not a table.
+
+        A one-column CSV or an empty frame will let the generated validation
+        script run and produce a confident answer from nothing.
+        """
+        rows, cols = df.shape
+        if rows < MIN_TABULAR_ROWS or cols < MIN_TABULAR_COLUMNS:
+            return (
+                f"Parsed but not tabular: {rows} row(s) x {cols} column(s), "
+                f"need at least {MIN_TABULAR_ROWS}x{MIN_TABULAR_COLUMNS}"
+            )
+        return None
+
+    @staticmethod
+    def _check_json(data: Any) -> Optional[str]:
+        """Same check for JSON, which is where the false positives actually came from.
+
+        The measured run recorded 12 dataset "successes" that were Crossref
+        bibliographic records: valid JSON, a dict at the top level, no rows.
+        Dropping ``application/json`` from the Accept header closed that one
+        route; this closes the shape.
+        """
+        if isinstance(data, list):
+            if len(data) < MIN_TABULAR_ROWS:
+                return "Parsed but not tabular: empty JSON array"
+            first = data[0]
+            if isinstance(first, dict) and len(first) >= MIN_TABULAR_COLUMNS:
+                return None
+            return "Parsed but not tabular: JSON array is not a list of records"
+        if isinstance(data, dict):
+            # A dict of equal-length columns is a table; anything else (a
+            # bibliographic record, an API envelope) is not.
+            columns = [v for v in data.values() if isinstance(v, list)]
+            if len(columns) >= MIN_TABULAR_COLUMNS and all(
+                len(c) >= MIN_TABULAR_ROWS for c in columns
+            ):
+                return None
+            for value in data.values():
+                if isinstance(value, list) and value and isinstance(value[0], dict) \
+                        and len(value[0]) >= MIN_TABULAR_COLUMNS:
+                    return None  # {"records": [{...}, ...]} — a common envelope
+            return "Parsed but not tabular: JSON object carries no record array"
+        return "Parsed but not tabular: JSON is a scalar"
 
     @staticmethod
     def _sniff_format(

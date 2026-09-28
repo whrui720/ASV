@@ -2,21 +2,58 @@
 
 import logging
 import re
-import requests
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple
+from urllib.parse import urlparse
+
 from .config import (
     DOWNLOAD_TIMEOUT,
+    EZPROXY_HOST,
+    EZPROXY_MAX_PER_RUN,
     TEXT_OUTPUT_DIR,
     INSTITUTIONAL_COOKIES,
     MAX_CANDIDATES_PER_BATCH,
 )
 from .academic_paper_finder import AcademicPaperFinder
 from .content_quality import assess_content
+from .polite_http import PoliteSession
+from asv.core import credentials as creds
 from asv.core.run_paths import RunPaths
 from asv.core.verdicts import ContentQuality, content_quality_rank
 
 logger = logging.getLogger(__name__)
+
+
+def ezproxy_url(url: str, proxy_host: Optional[str] = None) -> Optional[str]:
+    """Rewrite *url* through an EZproxy host — SOURCE_ACQUISITION.md §7.
+
+    EZproxy access is a hostname rewrite, not a cookie hack::
+
+        https://www.sciencedirect.com/science/article/pii/X
+        -> https://www-sciencedirect-com.proxy.lib.umich.edu/science/article/pii/X
+
+    Returns None when no proxy is configured, or when rewriting would be
+    pointless: an open-access aggregator is not behind the library's
+    subscription, and proxying it only spends the run's proxy budget.
+
+    ``proxy_host=None`` means "use the configured default"; an explicit ``""``
+    means "no proxy" and is honoured as such, so a caller can disable the
+    rewrite without depending on the ambient environment.
+    """
+    proxy_host = (EZPROXY_HOST if proxy_host is None else proxy_host).strip().strip("/")
+    if not proxy_host:
+        return None
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if not host or not parsed.scheme.startswith("http"):
+        return None
+    if host.endswith(proxy_host):
+        return None  # already proxied
+    from .fulltext_apis import _is_repository
+    if _is_repository(url) or host in ("doi.org", "dx.doi.org"):
+        return None
+    proxied = host.replace(".", "-").replace(":", "-") + "." + proxy_host
+    return parsed._replace(scheme="https", netloc=proxied).geturl()
 
 
 class TextDownloader:
@@ -36,18 +73,21 @@ class TextDownloader:
         else:
             self.output_dir = Path(TEXT_OUTPUT_DIR)
             self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.session = requests.Session()
-        # Browser-like headers reduce trivial 403s from publishers that sniff UA.
-        self.session.headers.update({
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/120.0.0.0 Safari/537.36'
+        # A browser-shaped UA was never enough on its own: 80% of failed fetches
+        # were 403s from publishers that also look at Referer, Sec-Fetch-* and
+        # request cadence. PoliteSession supplies all three (F2, F7).
+        self.session = PoliteSession(default_headers={
+            'Accept': (
+                'text/html,application/xhtml+xml,application/xml;q=0.9,'
+                'application/pdf;q=0.9,*/*;q=0.8'
             ),
-            'Accept': 'application/pdf,text/html;q=0.9,application/xhtml+xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
         })
         self._paper_finder = AcademicPaperFinder(llm_client=llm_client)
+        #: Proxied fetches used so far. Bulk downloading through a library proxy
+        #: is what gets institutional access suspended, so the budget is per-run
+        #: and shared across every batch.
+        self._ezproxy_used = 0
     
     # Minimum extracted text length (non-whitespace) required to treat a fetched
     # PDF/HTML as a usable source. Anything smaller is almost certainly a
@@ -74,7 +114,15 @@ class TextDownloader:
         """
         try:
             logger.info(f"Downloading text from: {url}")
-            response = self.session.get(url, timeout=DOWNLOAD_TIMEOUT)
+            # Per-host auth headers (Wiley TDM token, Elsevier API key) are keyed
+            # on the host rather than attached to whichever resolver produced the
+            # URL, so a TDM link carries its token however it was found.
+            response = self.session.get(
+                url,
+                timeout=DOWNLOAD_TIMEOUT,
+                browser_headers=True,
+                headers=creds.auth_headers_for(url) or None,
+            )
             response.raise_for_status()
         except Exception as e:
             logger.error(f"✗ Download failed: {e}")
@@ -134,6 +182,8 @@ class TextDownloader:
             page_count: Optional[int] = None
             if file_format == 'pdf':
                 text_content, page_count = self._extract_pdf_text(local_path)
+            elif file_format == 'xml':
+                text_content = self._extract_xml_text(body.decode('utf-8', errors='replace'))
             elif file_format in ('html', 'htm'):
                 text_content = self._extract_html_text(body.decode('utf-8', errors='replace'))
             else:
@@ -206,10 +256,18 @@ class TextDownloader:
             return 'pdf'
         if head_lower.startswith(b"<!doctype html") or head_lower.startswith(b"<html"):
             return 'html'
+        # JATS full text from Europe PMC / NCBI efetch / Springer arrives as XML
+        # and must not reach the HTML extractor, which would keep the markup's
+        # metadata soup and drop the article body's structure.
+        if head_lower.startswith(b"<?xml") or head_lower.startswith(b"<!doctype article") \
+                or head_lower.startswith(b"<article") or head_lower.startswith(b"<pmc-articleset"):
+            return 'xml'
 
         # 2. Content-Type header
         if 'application/pdf' in content_type:
             return 'pdf'
+        if 'xml' in content_type:
+            return 'xml'
         if 'text/html' in content_type:
             return 'html'
 
@@ -217,10 +275,78 @@ class TextDownloader:
         url_lower = url.lower()
         if '.pdf' in url_lower:
             return 'pdf'
+        if '.xml' in url_lower or 'fulltextxml' in url_lower:
+            return 'xml'
         if '.html' in url_lower or '.htm' in url_lower:
             return 'html'
 
         return 'txt'
+
+    def _extract_xml_text(self, xml_content: str) -> str:
+        """Extract readable article text from JATS / PMC XML.
+
+        This is the payoff of adding Europe PMC and the PMC deposits: the
+        publisher's own structured full text, with no PDF layout to reconstruct
+        and no landing-page chrome to strip. Section titles are emitted on their
+        own lines because the content-quality classifier keys off IMRaD headings
+        — losing them would make real full text look like an abstract.
+
+        ``<ref-list>`` is dropped: a bibliography is the single biggest source of
+        false TF-IDF matches, and the classifier separately penalises pages that
+        are mostly references.
+        """
+        try:
+            from bs4 import BeautifulSoup
+            try:
+                soup = BeautifulSoup(xml_content, "lxml-xml")
+            except Exception:
+                soup = BeautifulSoup(xml_content, "html.parser")
+
+            for tag in soup.find_all(["ref-list", "back", "journal-meta",
+                                      "author-notes", "fn-group", "table-wrap-foot"]):
+                tag.decompose()
+
+            parts: List[str] = []
+            title = soup.find("article-title")
+            if title:
+                parts.append(title.get_text(" ", strip=True))
+
+            abstract = soup.find("abstract")
+            if abstract:
+                parts.append("Abstract")
+                parts.append(abstract.get_text(" ", strip=True))
+
+            body = soup.find("body")
+            scope = body if body is not None else soup
+            for section in scope.find_all("sec", recursive=True):
+                sec_title = section.find("title", recursive=False)
+                if sec_title:
+                    heading = sec_title.get_text(" ", strip=True)
+                    if heading:
+                        parts.append("\n" + heading)
+                for para in section.find_all(["p", "list-item"], recursive=False):
+                    text = para.get_text(" ", strip=True)
+                    if text:
+                        parts.append(text)
+
+            # Some deposits carry body paragraphs with no <sec> wrapper at all.
+            if body is not None and not body.find("sec"):
+                for para in body.find_all("p"):
+                    text = para.get_text(" ", strip=True)
+                    if text:
+                        parts.append(text)
+
+            out = "\n".join(p for p in parts if p and p.strip())
+            if out.strip():
+                logger.debug(f"  XML extracted via JATS parse: {len(out)} chars")
+                return out
+
+            # Not JATS after all (an error document, an OAI wrapper). Fall back
+            # to every text node rather than reporting an empty extraction.
+            return soup.get_text("\n", strip=True)
+        except Exception as e:
+            logger.error(f"XML extraction failed: {e}")
+            return xml_content
 
     def _extract_pdf_text(self, pdf_path: Path) -> Tuple[str, Optional[int]]:
         """
@@ -306,46 +432,22 @@ class TextDownloader:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_content, 'html.parser')
 
-            # 1. Kill non-content elements.
+            # 1. Kill elements that are never article text, by tag. Safe to do
+            #    document-wide.
             for tag in soup(["script", "style", "nav", "header", "footer",
                              "aside", "form", "button", "noscript", "iframe"]):
                 tag.decompose()
 
-            # Kill common junk containers by class/id (banners, cookie prompts,
-            # related-article rails, sign-in blocks). Snapshot first — decompose()
-            # detaches descendants and iterating a live tree would then crash.
-            junk_patterns = ("cookie", "banner", "signin", "sign-in", "login",
-                             "related", "sidebar", "advert", "promo", "footer",
-                             "header", "nav", "skip-link", "menu", "share",
-                             "citation-tools", "metrics", "altmetric")
-
-            def _classes_of(el):
-                c = el.get("class")
-                if not c:
-                    return ""
-                return " ".join(c).lower() if isinstance(c, list) else str(c).lower()
-
-            junk_class_els = [
-                el for el in list(soup.find_all(attrs={"class": True}))
-                if el is not None and el.parent is not None
-                and any(p in _classes_of(el) for p in junk_patterns)
-            ]
-            for el in junk_class_els:
-                if el.parent is not None:
-                    el.decompose()
-
-            junk_id_els = [
-                el for el in list(soup.find_all(attrs={"id": True}))
-                if el is not None and el.parent is not None
-                and any(p in str(el.get("id", "")).lower() for p in junk_patterns)
-            ]
-            for el in junk_id_els:
-                if el.parent is not None:
-                    el.decompose()
-
-            # 2. Prefer a semantic article container.
-            #    Common publisher selectors (Nature/Springer use ``.c-article-body``,
-            #    ScienceDirect uses ``#body``, PMC uses ``.jig-ncbiinpagenav``…).
+            # 2. Pick the content root *first*, then clean inside it.
+            #
+            #    Order matters, and getting it wrong cost us a whole publisher.
+            #    Cleaning first meant a junk-class match anywhere in the tree
+            #    could delete an *ancestor* of the article: nature.com wraps its
+            #    content in <div id="content" class="… eds-l-with-sidebar">, the
+            #    substring "sidebar" matched, and 284KB of successfully fetched
+            #    article became zero characters of extracted text — reported as
+            #    a failed download. Scoping the cleanup to the content root
+            #    makes an ancestor's layout class structurally unable to matter.
             container = (
                 soup.find("article")
                 or soup.find("main")
@@ -360,13 +462,57 @@ class TextDownloader:
                 or soup
             )
 
+            full_text = container.get_text(separator="\n")
+
+            # 3. Strip navigation chrome from *within* the chosen root: cookie
+            #    banners, related-article rails, sign-in blocks. These dilute
+            #    TF-IDF and let nav phrases outrank real content.
+            junk_patterns = ("cookie", "banner", "signin", "sign-in", "login",
+                             "related", "sidebar", "advert", "promo", "footer",
+                             "header", "nav", "skip-link", "menu", "share",
+                             "citation-tools", "metrics", "altmetric")
+            # No single element that holds most of the root's text is chrome.
+            # This is the backstop for the failure above: even a selector we
+            # have not seen cannot delete the article.
+            keep_threshold = max(200, int(len(full_text) * 0.4))
+
+            def _attrs_of(el) -> str:
+                c = el.get("class")
+                classes = (" ".join(c) if isinstance(c, list) else str(c or ""))
+                return (classes + " " + str(el.get("id") or "")).lower()
+
+            # Snapshot first — decompose() detaches descendants, and iterating a
+            # live tree would then walk into freed nodes.
+            for el in list(container.find_all(attrs={"class": True})) + \
+                    list(container.find_all(attrs={"id": True})):
+                if el is None or el.parent is None or el is container:
+                    continue
+                if not any(p in _attrs_of(el) for p in junk_patterns):
+                    continue
+                if len(el.get_text(separator=" ")) > keep_threshold:
+                    continue
+                el.decompose()
+
             text = container.get_text(separator="\n")
 
-            # 3. Whitespace cleanup.
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = "\n".join(chunk for chunk in chunks if chunk)
-            return text
+            # 4. Whitespace cleanup.
+            def _tidy(raw: str) -> str:
+                lines = (line.strip() for line in raw.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                return "\n".join(chunk for chunk in chunks if chunk)
+
+            cleaned = _tidy(text)
+            # 5. Last-resort guard: if cleaning destroyed the page rather than
+            #    tidying it, keep what we had. A noisy document is recoverable;
+            #    an empty one is reported as a failed fetch.
+            if len(cleaned) < min(200, len(_tidy(full_text))):
+                logger.warning(
+                    "  HTML cleanup removed almost everything "
+                    f"({len(cleaned)} of {len(full_text)} chars) — keeping the "
+                    "uncleaned article body instead"
+                )
+                return _tidy(full_text)
+            return cleaned
         except Exception as e:
             logger.error(f"HTML extraction failed: {e}")
             return html_content
@@ -457,25 +603,31 @@ class TextDownloader:
             logger.info("  Direct URL was not full text; continuing resolution.")
 
         # 2. Open-access resolution — iterate over ranked candidates.
+        #    Each attempt is tagged with the *resolver* that produced it
+        #    (``europepmc_fulltext``, ``unpaywall``, ``openalex``, …) rather than
+        #    a generic ``open_access``, so the manifest says which service is
+        #    actually earning its place.
         logger.info(f"Resolving citation [{citation_id}]: {raw_citation_text[:80]}...")
         known_doi = getattr(citation_details, "doi", None) if citation_details else None
-        candidates = self._paper_finder.find_urls(raw_citation_text, known_doi=known_doi)
+        candidates = self._paper_finder.find_candidates(
+            raw_citation_text, known_doi=known_doi
+        )
         tried_urls = {a['url'] for a in attempts}
-        for url in candidates:
+        for candidate in candidates:
             if fetches >= MAX_CANDIDATES_PER_BATCH:
                 logger.info(
                     f"  Candidate cap ({MAX_CANDIDATES_PER_BATCH}) reached; "
                     f"keeping best so far."
                 )
                 break
-            if url in tried_urls:
+            if candidate.url in tried_urls:
                 continue
-            tried_urls.add(url)
+            tried_urls.add(candidate.url)
             fetches += 1
-            logger.info(f"  Attempt {fetches}: {url}")
+            logger.info(f"  Attempt {fetches} [{candidate.kind}]: {candidate.url}")
             if _consider(
-                url, 'open_access',
-                self.download(url, citation_id, filename_suffix=f"_c{fetches}"),
+                candidate.url, candidate.source,
+                self.download(candidate.url, citation_id, filename_suffix=f"_c{fetches}"),
             ):
                 return self._finish(best, best_url, attempts)
 
@@ -540,6 +692,58 @@ class TextDownloader:
                     body, u, citation_id, filename_suffix=f"_c{fetches}",
                 )
                 if _consider(u, 'browser', result):
+                    return self._finish(best, best_url, attempts)
+
+        # 5. EZproxy — the library's sanctioned access path (§7). A hostname
+        # rewrite, fetched through the *browser* context so the user's SSO
+        # session applies; ASV never sees a credential. Strictly better than
+        # INSTITUTIONAL_COOKIES: it survives cookie rotation and asks nobody to
+        # paste secrets into a .env.
+        #
+        # Guardrails matter more here than anywhere else in the pipeline —
+        # bulk downloading through a proxy is what gets a university's access
+        # suspended — so this is opt-in, capped per run, and only ever applied
+        # to publisher hosts that already refused us.
+        #
+        # Reaching this point means no candidate produced judgeable full text —
+        # ``_consider`` returns early when one does. So this runs for an
+        # abstract-only batch too, not just a total failure: an abstract is
+        # precisely the case a subscription can upgrade, and abstaining on one
+        # we could have read is the recall cost Tier 0.3 pays and this repays.
+        if EZPROXY_HOST and browser_searcher is not None:
+            proxied_tries = 0
+            for a in attempts[:]:
+                if proxied_tries >= 3:
+                    break
+                if self._ezproxy_used >= EZPROXY_MAX_PER_RUN:
+                    logger.warning(
+                        f"  EZproxy budget for this run exhausted "
+                        f"({EZPROXY_MAX_PER_RUN}) — not proxying further."
+                    )
+                    break
+                if a.get('source') == 'ezproxy':
+                    continue
+                proxied = ezproxy_url(a.get('url') or "")
+                if not proxied or proxied in tried_urls:
+                    continue
+                tried_urls.add(proxied)
+                proxied_tries += 1
+                self._ezproxy_used += 1
+                logger.info(f"  EZproxy retry {proxied_tries}: {proxied}")
+                body = browser_searcher.download_url(proxied)
+                if not body:
+                    attempts.append({
+                        'url': proxied,
+                        'source': 'ezproxy',
+                        'downloaded': False,
+                        'content_quality': None,
+                        'error': 'proxied fetch returned no content (SSO session may be missing)',
+                    })
+                    continue
+                fetches += 1
+                if _consider(proxied, 'ezproxy', self._process_bytes(
+                    body, proxied, citation_id, filename_suffix=f"_c{fetches}",
+                )):
                     return self._finish(best, best_url, attempts)
 
         if best is not None:

@@ -2,12 +2,32 @@ import type { components } from "../api/types";
 
 type ResolutionAttempt = components["schemas"]["ResolutionAttempt"];
 
+// Attempts are now tagged with the *resolver* that produced the URL rather than
+// a single "open_access" bucket, so this view answers "which service is earning
+// its place" — the question SOURCE_ACQUISITION.md could only answer by hand.
+// Unknown keys fall through to the raw label, so a new resolver is never hidden.
 const SOURCE_LABEL: Record<string, string> = {
   direct: "Direct URL",
   open_access: "Open access (Unpaywall/S2/CrossRef)",
   found_dataset: "Found dataset",
   institutional_cookies: "Institutional cookies",
   browser: "Browser (authenticated)",
+  ezproxy: "EZproxy (institutional)",
+  // Full-text locators, best first.
+  europepmc_fulltext: "Europe PMC full text (XML)",
+  pmc_efetch: "PubMed Central full text (XML)",
+  europepmc: "Europe PMC",
+  openalex: "OpenAlex",
+  unpaywall: "Unpaywall",
+  semantic_scholar: "Semantic Scholar",
+  crossref: "CrossRef",
+  core: "CORE (repositories)",
+  arxiv: "arXiv",
+  wiley_tdm: "Wiley TDM",
+  elsevier_tdm: "Elsevier TDM",
+  springer_oa: "Springer Nature OA",
+  doi_landing: "DOI landing page (last resort)",
+  google_scholar: "Google Scholar (browser)",
 };
 
 // The "why did this fail" view (S4 §6): the ordered cascade of every URL the

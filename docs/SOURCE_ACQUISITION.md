@@ -1,7 +1,10 @@
 # Source Acquisition — Current State, Failure Modes, and Improvement Plan
 
-**Status:** analysis / proposal. Nothing here is implemented yet.
-**Date:** 2026-09-01.
+**Status:** Phases 0–4 implemented 2026-09-23. See
+[§10 Implementation status](#10--implementation-status) for what shipped, what
+was measured, and the endpoint facts that turned out to be wrong when checked
+against the live services.
+**Date:** 2026-09-01 (analysis), 2026-09-23 (implementation).
 **Scope:** how ASV finds and downloads the two kinds of evidence it validates against —
 *text sources* (the cited papers) and *data sources* (tabular datasets) — why the hit rate
 is low, and what to do about it.
@@ -433,6 +436,108 @@ Each phase is independently shippable and independently measurable against the s
 
 **Phase 5 — residual rescue**
 - `claude-in-chrome` operator lane over the still-failing batches (§8).
+
+---
+
+## 10 — Implementation status
+
+Implemented 2026-09-23. Ordered as §9 proposed; the phase numbers below are that
+plan's.
+
+### What shipped
+
+| Item | Where | Note |
+|---|---|---|
+| **F7** HTTP cache, retry/backoff, per-host rate limit | `sourcefinder/polite_http.py` (new) | One process-wide host clock shared by every session. The audit, the resolver and the downloader each had their own, so "1 req/host/sec" was really three. Also a **default 25s timeout** — `requests` waits forever, and a resolver asking eight services per citation has eight chances to hang the run — with timeouts deliberately *not* retried, and a per-host circuit breaker that expires after a cooldown rather than killing the host for the run. |
+| **F1** Union-then-rank resolution | `academic_paper_finder.find_candidates` | Every resolver is asked; the pool is deduped and sorted by *kind*, not by who answered first. |
+| **§6 Tier 1** Europe PMC, PMC ID converter, NCBI efetch, OpenAlex, CORE, arXiv | `sourcefinder/fulltext_apis.py` (new) | Europe PMC/efetch return JATS, which ranks above every PDF: no layout to reconstruct, no landing-page chrome. |
+| **§6 Tier 2** Wiley TDM, Elsevier, Springer Nature | `fulltext_apis.publisher_tdm` + `core/credentials.auth_headers_for` | Headers are keyed on *host*, so a TDM link carries its token whichever resolver surfaced it. Silent without a key rather than emitting a URL that is certain to 400. |
+| JATS/XML format detection and extraction | `text_downloader._extract_xml_text` | Section titles are preserved on their own lines because the content gate keys off IMRaD headings; `<ref-list>` is dropped. |
+| **F2** `Referer` / `Sec-Fetch-*` on publisher fetches | `polite_http.PoliteSession.get(browser_headers=True)` | Measurably works — see below. |
+| **F6** Login checkpoint keyed on resolved hosts | `claim_orchestrator._resolution_prepass` + `_paywall_login_checkpoint` | Resolution now runs as step 0b over every cited source, before any claim is processed. It is cached, so the batches read it back — a reordering, not extra work. |
+| **F8** Reference-string repair | `sourcefinder/reference_text.py` (new) | Applied before the LLM parse, before Crossref, and in the Tier 0.6 audit. |
+| **F5** Suffix-matched institutional cookies | `academic_paper_finder.fetch_with_cookies` | A `nature.com` entry no longer silently misses `www.nature.com`. |
+| Title verification on every search hit | `fulltext_apis.title_matches` | Not in the plan, but the plan's own fix created the need. Europe PMC, OpenAlex, Semantic Scholar and Crossref title searches all return a best row whether or not it is the paper. Unverified, that row's DOI propagates into every other resolver and ASV judges a claim against the wrong paper *behind a resolvable source URL* — a false accusation with a citation attached. |
+| **§7** EZproxy rewrite phase | `text_downloader.ezproxy_url` + phase 5 | Opt-in via `EZPROXY_HOST`, fetched through the browser context so SSO applies, capped at `EZPROXY_MAX_PER_RUN` (40). |
+| **F10 / Phase 4** Zenodo, Figshare, DataCite, HuggingFace JSON APIs | `dataset_finder` | Replaces three SPA scrapes that returned zero links 100% of the time. |
+| **F10** Entity-driven queries, real LLM re-rank, tabular shape check, size cap | `dataset_finder`, `dataset_downloader` | `MAX_FILE_SIZE_MB` is enforced by streaming; it was dead config. The re-rank may reject every candidate. |
+| **§3** Credentials editable in the UI | `core/credentials.py` (new), `/api/config/credentials`, `ConfigPage` | One catalogue drives the API, the form and the health view. Secrets are write-only over HTTP. |
+
+### Six things the analysis got wrong, found by calling the services
+
+1. **Europe PMC full text is `/webservices/rest/{PMCID}/fullTextXML`** — the
+   PMCID alone in the path. The `/{source}/{id}/` form documented for other
+   operations returns 404 for every record tested.
+2. **Europe PMC answers `500`, not `404`, for an article outside its OA
+   subset.** This briefly made things *worse*: 500 is retryable, so the circuit
+   breaker tripped three non-OA articles into a run and disabled the
+   highest-yield source for everything after it. The breaker now counts only
+   429s, and the `fullTextXML` candidate is gated on the record's `inEPMC` flag.
+3. **Figshare's article search is POST with a JSON body.** The GET form returns
+   404 with a routing error that reads like "no results".
+4. **Zenodo's API returns 403 to the Chrome User-Agent and 200 to a descriptive
+   research agent** — the exact opposite of what publishers want. The UA is now
+   chosen per service: `BROWSER_UA` for pages meant for humans,
+   `api_user_agent()` for registries.
+
+5. **OpenAlex without a `mailto` is not slow, it is unusable.** §6 lists the
+   parameter as a politeness nicety ("add `?mailto=` for the polite pool").
+   Measured: an anonymous DOI lookup **returned 200 after 90 seconds**; the same
+   call with an address answers in under a second. It throttles by *delaying*,
+   which a read timeout cannot catch because bytes are still arriving — so the
+   only choices are to stall the run or to skip the service. ASV now skips
+   OpenAlex when no contact email is configured and says so once, and the
+   config page states the consequence on the field itself. At 50 citations the
+   difference is a 12-minute resolution pass versus a 90-minute one.
+6. **arXiv costs ~16 seconds per call** (`export.arxiv.org` paces requests
+   hard) and a biomedical corpus is not on arXiv. Paying that on every citation
+   is 13 minutes per run for zero yield, so arXiv and CORE now run only when
+   every other resolver came up empty — which is the case they are actually for.
+
+Also: **data.gov's CKAN API is gone.** `/api/3/action/*`, `/api/1/search` and
+`/dataset.json` all answer 404 from something that is not CKAN any more. It is
+off by default behind `ASV_ENABLE_DATA_GOV` rather than costing a round trip per
+claim.
+
+### Measured
+
+15 citations from `hsv_cancer.pdf`, **no optional credentials set** (no
+`UNPAYWALL_EMAIL`, so Unpaywall is skipped entirely; no CORE or TDM keys):
+
+| | Old run (20260706_192057) | New, keyless |
+|---|---|---|
+| batches with exactly 1 candidate URL | 32/51 (63%) | 3/15 (20%) |
+| batches with ≥2 candidates | 17/51 (33%) | 11/15 (73%) |
+| bytes obtained | 16/51 (31%) | 8/15 (53%) |
+| **judgeable full text** | not measured (the distinction did not exist) | 2/15 (13%) |
+
+The headline number goes **down**, and that is the point: the old 31% counted
+publisher landing pages as successes. Of the eight fetches that now succeed,
+five are `abstract_only` and one is a `paywall_interstitial` — honestly graded
+and honestly abstained on, per TIER0_PLAN.md §4. The 13% is the first number
+this project has produced that means "we read the article".
+
+One incidental find worth its own line: with `Referer`/`Sec-Fetch-*` in place,
+`nature.com` returns **200** where it used to 403 — and the fetched 284KB was
+being reduced to *zero characters* by the HTML extractor, because the junk-class
+filter ran before the content root was chosen and Nature's wrapper carries the
+layout class `eds-l-with-sidebar`. Choosing the root first, then cleaning inside
+it, recovered 8.2k chars per Nature page.
+
+### Not done
+
+- **Phase 5** (`claude-in-chrome` operator rescue lane) — deliberately deferred;
+  it is a human-in-the-loop workflow, not a pipeline change.
+- **F9** citation-kind routing to `unresolvable_source_type`. The enum value
+  (`unresolvable_by_design`) and the type list already exist and Tier 0.6 uses
+  them for the reference audit, but the *acquisition* path does not yet skip
+  book chapters.
+- Persisting Playwright `storage_state()` across runs (F5's second half).
+- Google Scholar is **off by default** (`ASV_ENABLE_SCHOLAR=1` to re-enable),
+  per F4's "retire it or gate it behind an explicit opt-in flag". Gated rather
+  than deleted because it remains the only route for a reference no index
+  carries. Now that resolution runs as an up-front pass, leaving it on meant
+  ~14 CAPTCHA-prone browser searches before the run could start.
 
 ---
 

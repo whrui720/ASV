@@ -288,3 +288,43 @@ class CompareResult(BaseModel):
 class ConfigStatus(BaseModel):
     env_keys: Dict[str, bool]
     thresholds: Dict[str, Any]
+
+
+class CredentialField(BaseModel):
+    """One editable credential, as the config page renders it.
+
+    ``value`` is the real value for non-secret fields (an email, a proxy
+    hostname — a user fixing their own typo needs to see it) and a masked hint
+    for secrets. A secret's plaintext never leaves the server.
+    """
+
+    name: str
+    label: str
+    group: str
+    help: str
+    impact: str = ""
+    secret: bool = True
+    required: bool = False
+    placeholder: str = ""
+    signup_url: Optional[str] = None
+    input_type: str = "text"
+    present: bool = False
+    value: str = ""
+    #: Set from the shell rather than ``.env``; the page cannot clear it.
+    from_shell: bool = False
+
+
+class CredentialsStatus(BaseModel):
+    fields: List[CredentialField]
+    group_order: List[str]
+    group_blurb: Dict[str, str]
+    #: Absolute path of the ``.env`` being written, so the user can find it.
+    env_path: str
+
+
+class CredentialsUpdate(BaseModel):
+    """Names are validated against the catalogue server-side; an unknown key is
+    rejected rather than written, so this endpoint cannot set arbitrary
+    environment variables."""
+
+    values: Dict[str, str]

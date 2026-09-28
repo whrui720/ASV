@@ -82,6 +82,29 @@ LLM_TASK_CONFIG = {
         "escalate_to": None,
         "escalate_if_confidence_below": None,
     },
+    # Turns a claim sentence into registry search terms. Cheap and high-volume
+    # — one call per uncited quantitative claim.
+    "dataset_query_building": {
+        "model": LLM_MODEL_SMALL,
+        "strength": "small",
+        "cost_tier": "low",
+        "temperature": 0.1,
+        "daily_budget_usd": 0.25,
+        "escalate_to": None,
+        "escalate_if_confidence_below": None,
+    },
+    # Picks which candidate dataset could actually settle a claim, and is
+    # allowed to reject them all. Medium tier because a wrong pick here produces
+    # a script that answers a different question, confidently.
+    "dataset_reranking": {
+        "model": LLM_MODEL_MEDIUM,
+        "strength": "medium",
+        "cost_tier": "medium",
+        "temperature": 0.1,
+        "daily_budget_usd": 0.50,
+        "escalate_to": None,
+        "escalate_if_confidence_below": None,
+    },
     "generic": {
         "model": DEFAULT_LLM_MODEL,
         "strength": "small",

@@ -1,76 +1,92 @@
-"""
-Academic Paper Finder — resolves citations to downloadable URLs.
+"""Academic Paper Finder — resolves citations to downloadable URLs.
 
-Resolution cascade (each step is tried only if the previous returned nothing):
-  1. Unpaywall API       (DOI required, UNPAYWALL_EMAIL recommended)
-  2. Semantic Scholar    (DOI or title search)
-  3. CrossRef            (DOI, returns PDF links when publisher provides them)
+**Union-then-rank, not first-hit-wins** (SOURCE_ACQUISITION.md F1). The previous
+cascade guarded every step with ``if not candidates``, so a single publisher URL
+from Unpaywall shadowed Semantic Scholar, Crossref and Google Scholar — the
+measured consequence being that 32 of 51 citation batches had exactly one
+candidate URL and one 403 killed the batch outright.
 
-Cookie-based institutional auth fallback:
-  Set INSTITUTIONAL_COOKIES in .env as a JSON string:
-      {"www.jstor.org": {"SessionID": "abc123"}, "www.nature.com": {"access_token": "xyz"}}
-  When a URL is found but requires a login, fetch_with_cookies() will attempt
-  to use the matching domain's cookies from that dict.
+Now every resolver that can cheaply say something is asked, the answers are
+pooled, deduped, and sorted by how likely the bytes at that URL are to contain
+the sentence we need to quote:
+
+    full-text XML  >  repository PDF  >  repository landing
+                   >  publisher PDF   >  publisher landing  >  search guess
+
+The expensive resolvers (Google Scholar through a real browser) still run only
+when the pool is thin, because they cost seconds rather than milliseconds.
+
+Resolution is cached per citation string for the life of the process, which is
+what makes the orchestrator's up-front resolution pass free: it resolves every
+citation to decide which publishers need a login, and the per-batch calls that
+follow are cache hits.
+
+Cookie-based institutional auth remains as an escape hatch (see
+``INSTITUTIONAL_COOKIES``), but the browser login flow and ``EZPROXY_HOST``
+supersede it.
 """
 
 import json
 import logging
-import re
-import requests
-from typing import Optional, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from asv.core import credentials as creds
+
 from .config import (
-    UNPAYWALL_API,
-    SEMANTIC_SCHOLAR_API,
     CROSSREF_API,
-    UNPAYWALL_EMAIL,
-    SEMANTIC_SCHOLAR_API_KEY,
-    INSTITUTIONAL_COOKIES,
+    ENABLE_GOOGLE_SCHOLAR,
     DOWNLOAD_TIMEOUT,
+    INSTITUTIONAL_COOKIES,
+    MAX_RESOLUTION_CANDIDATES,
+    SEMANTIC_SCHOLAR_API,
+    SEMANTIC_SCHOLAR_API_KEY,
+    THIN_CANDIDATE_POOL,
+    UNPAYWALL_API,
+    UNPAYWALL_EMAIL,
 )
+from .fulltext_apis import (
+    FullTextAPIs,
+    SourceCandidate,
+    classify,
+    clean_doi,
+    extract_doi,
+    rank_and_dedupe,
+    title_matches,
+)
+from .polite_http import PoliteSession
+from .reference_text import normalise_reference
 
 logger = logging.getLogger(__name__)
 
-_DOI_RE = re.compile(r'\b(10\.\d{4,}/\S+?)(?:[,\s\])}]|$)', re.IGNORECASE)
-
-
-def _clean_doi(doi: Optional[str]) -> Optional[str]:
-    """Strip a doi.org prefix and trailing punctuation from a DOI string."""
-    if not doi:
-        return None
-    doi = str(doi).strip().rstrip(".")
-    doi = re.sub(r"^https?://(dx\.)?doi\.org/", "", doi, flags=re.IGNORECASE)
-    return doi or None
-
-
-def _extract_doi(text: str) -> Optional[str]:
-    """Extract first DOI found in raw citation text."""
-    if not text:
-        return None
-    m = _DOI_RE.search(text)
-    return m.group(1).rstrip(".") if m else None
-
 
 class AcademicPaperFinder:
-    """
-    Resolves a raw citation string (or DOI) to a publicly accessible PDF/HTML URL.
-    Tries open-access APIs first; falls back to browser search (Google Scholar) if set.
+    """Resolves a raw citation string (or DOI) to a ranked candidate list.
 
-    When llm_client is provided, the finder will parse bibliography-formatted citation
-    strings into structured fields (title, first_author, year, doi) before searching,
-    which dramatically improves hit rates for refs lacking inline DOIs.
+    When ``llm_client`` is provided the finder parses bibliography-formatted
+    strings into structured fields before searching, which matters enormously
+    on real corpora: the test paper carries zero inline DOIs across 253
+    references.
     """
 
     def __init__(self, llm_client=None):
         self.llm_client = llm_client
         self.browser_searcher = None  # injected by orchestrator after startup login
-        self._session = requests.Session()
-        self._session.headers["User-Agent"] = (
-            "ASV-pipeline/1.0 (academic source validation; contact via project repo)"
+        self._session = PoliteSession(
+            "ASV-pipeline/1.0 (academic source validation; "
+            + (("mailto:" + creds.contact_email()) if creds.contact_email()
+               else "contact via project repo")
+            + ")",
+            default_headers={"Accept": "application/json"},
         )
-        if SEMANTIC_SCHOLAR_API_KEY:
-            self._session.headers["x-api-key"] = SEMANTIC_SCHOLAR_API_KEY
+        # Sent per request, never on the session: this session also talks to
+        # Crossref, Unpaywall, Europe PMC, OpenAlex and (via fetch_with_cookies)
+        # arbitrary publisher hosts, none of which should see the key.
+        self._s2_headers = (
+            {"x-api-key": SEMANTIC_SCHOLAR_API_KEY} if SEMANTIC_SCHOLAR_API_KEY else {}
+        )
+
+        self.fulltext = FullTextAPIs(self._session)
 
         # Parse institutional cookies once at startup
         self._inst_cookies: Dict[str, Dict[str, str]] = {}
@@ -78,140 +94,172 @@ class AcademicPaperFinder:
             try:
                 self._inst_cookies = json.loads(INSTITUTIONAL_COOKIES)
                 logger.info(
-                    f"Institutional cookies loaded for domains: {list(self._inst_cookies.keys())}"
+                    "Institutional cookies loaded for domains: %s",
+                    list(self._inst_cookies.keys()),
                 )
             except json.JSONDecodeError as e:
-                logger.warning(f"INSTITUTIONAL_COOKIES is not valid JSON: {e}")
+                logger.warning("INSTITUTIONAL_COOKIES is not valid JSON: %s", e)
 
-        # Cache LLM-parsed citation structure across batches so we don't re-parse
-        # the same bibliography string once per claim in the batch.
+        # Cache the LLM citation parse across batches so a batch of eight claims
+        # sharing one citation parses it once.
         self._parse_cache: Dict[str, Dict[str, Any]] = {}
+        # Cache the whole resolution, so the orchestrator's up-front pass over
+        # every citation costs nothing when the batches come round again.
+        self._resolution_cache: Dict[Tuple[str, str], List[SourceCandidate]] = {}
+        #: Every host any citation resolved to. The paywall-login checkpoint
+        #: reads this instead of grepping bibliography text for domain names
+        #: that were never in it (F6).
+        self.resolved_hosts: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
     def find_url(self, raw_citation_text: str) -> Optional[str]:
-        """Return the best single candidate URL, or None. Thin wrapper over find_urls."""
+        """Best single candidate URL, or None."""
         urls = self.find_urls(raw_citation_text)
         return urls[0] if urls else None
 
     def find_urls(
         self, raw_citation_text: str, known_doi: Optional[str] = None
-    ) -> list[str]:
+    ) -> List[str]:
+        """Ranked candidate URLs. Thin wrapper over :meth:`find_candidates`."""
+        return [c.url for c in self.find_candidates(raw_citation_text, known_doi)]
+
+    def find_candidates(
+        self, raw_citation_text: str, known_doi: Optional[str] = None
+    ) -> List[SourceCandidate]:
+        """Pool every resolver's answer, dedupe, and rank.
+
+        Ordering of the pool build matters only for tie-breaks within a kind;
+        the kind itself decides the ordering, so an Unpaywall publisher landing
+        page can no longer outrank a Europe PMC full-text mirror just because
+        Unpaywall was asked first.
         """
-        Return a ranked list of candidate URLs. Repository/PDF mirrors (PMC, arXiv,
-        institutional repos) are surfaced ahead of publisher landing pages so callers
-        can iterate on 401/403 without giving up on paywalled hits.
+        cache_key = (raw_citation_text or "", clean_doi(known_doi) or "")
+        cached = self._resolution_cache.get(cache_key)
+        if cached is not None:
+            return list(cached)
 
-        Resolution cascade (stops at the first step producing candidates):
-          1. Regex DOI → Unpaywall / Semantic Scholar / CrossRef
-          2. LLM-parsed DOI (catches DOIs the regex misses) → same three APIs
-          3. LLM-parsed title → Semantic Scholar text search (also recovers DOI of
-             non-OA hits and feeds it back into Unpaywall/CrossRef)
-          4. Browser fallback (Google Scholar) using LLM-built query
-        """
-        parsed = self._parse_citation_with_llm(raw_citation_text)
+        clean_text = normalise_reference(raw_citation_text)
+        parsed = self._parse_citation_with_llm(clean_text)
+        title = parsed.get("title")
+        first_author = parsed.get("first_author")
+        year = parsed.get("year")
 
-        candidates: list[str] = []
-
-        # 0. A DOI already confirmed by the Tier 0.6 bibliography audit, when the
-        #    caller has one. The test corpus carries zero inline DOIs across 253
-        #    references, so without this the resolver grinds through the whole
-        #    cascade rediscovering what the audit already established.
-        doi = _clean_doi(known_doi)
+        doi = (
+            clean_doi(known_doi)
+            or extract_doi(clean_text)
+            or clean_doi(parsed.get("doi"))
+        )
         if doi:
-            logger.info(f"  DOI supplied by reference audit: {doi}")
-            candidates = self._resolve_from_doi(doi)
+            logger.info("  DOI in hand: %s", doi)
 
-        # 1. Regex-extracted DOI (cheapest, no LLM cost).
-        if not candidates:
-            doi = _extract_doi(raw_citation_text)
-            if doi:
-                logger.info(f"  DOI extracted (regex): {doi}")
-                candidates = self._resolve_from_doi(doi)
+        pool: List[SourceCandidate] = []
 
-        # 2. LLM-parsed DOI (when regex missed it).
-        if not candidates and parsed.get("doi") and parsed["doi"] != doi:
-            doi2 = parsed["doi"]
-            logger.info(f"  DOI extracted (LLM): {doi2}")
-            candidates = self._resolve_from_doi(doi2)
+        # -- Tier 1: the services that actually hold open-access full text ---
+        ft_candidates, ft_meta = self.fulltext.locate(
+            doi=doi, title=title, first_author=first_author, year=year
+        )
+        pool.extend(ft_candidates)
+        if not doi and ft_meta.get("doi"):
+            doi = clean_doi(ft_meta["doi"])
+            logger.info("  DOI recovered from Europe PMC/OpenAlex: %s", doi)
 
-        # 3. Title-based Semantic Scholar search.
-        if not candidates:
-            title_query = parsed.get("title") or raw_citation_text
-            ss_urls, ss_doi = self._try_semantic_scholar_by_text(title_query)
-            candidates = list(ss_urls)
-            if not candidates and ss_doi and ss_doi != doi and ss_doi != parsed.get("doi"):
-                logger.info(f"  Semantic Scholar surfaced DOI: {ss_doi} — retrying OA APIs")
-                candidates = self._resolve_from_doi(ss_doi, skip_ss=True)
+        # -- The pre-existing resolvers, now unioned rather than short-circuited
+        if doi:
+            pool.extend(self._try_unpaywall(doi))
+            pool.extend(self._try_semantic_scholar_by_doi(doi))
+            pool.extend(self._try_crossref(doi))
 
-        # 3b. CrossRef bibliographic resolver.
-        if not candidates:
-            cr_doi = self._resolve_doi_via_crossref(parsed, raw_citation_text)
-            if cr_doi and cr_doi != doi and cr_doi != parsed.get("doi"):
-                logger.info(f"  CrossRef bibliographic surfaced DOI: {cr_doi} — retrying OA APIs")
-                candidates = self._resolve_from_doi(cr_doi)
+        if not doi:
+            ss_urls, ss_doi = self._try_semantic_scholar_by_text(
+                title or clean_text, expected_title=title
+            )
+            pool.extend(ss_urls)
+            if ss_doi:
+                doi = clean_doi(ss_doi)
+                logger.info("  Semantic Scholar surfaced DOI: %s", doi)
+                pool.extend(self._try_unpaywall(doi))
+                pool.extend(self._try_crossref(doi))
 
-        # 4. Browser fallback: Google Scholar.
-        if not candidates and self.browser_searcher is not None:
-            scholar_query = self._build_scholar_query(parsed, raw_citation_text)
-            logger.info(f"  APIs exhausted — trying Google Scholar via browser: {scholar_query!r}")
+        if not doi:
+            cr_doi = clean_doi(self._resolve_doi_via_crossref(parsed, clean_text))
+            if cr_doi:
+                doi = cr_doi
+                logger.info("  Crossref bibliographic surfaced DOI: %s", doi)
+                pool.extend(self._try_unpaywall(doi))
+                pool.extend(self._try_semantic_scholar_by_doi(doi))
+                pool.extend(self._try_crossref(doi))
+                # A DOI found this late has not been through the full-text
+                # locators yet, and it is exactly the DOI-less reference those
+                # locators help most.
+                late, _ = self.fulltext.locate(doi=doi)
+                pool.extend(late)
+
+        # -- Last resort, in rank order ---------------------------------------
+        # The DOI landing page. Deliberately last: it is usually a publisher
+        # paywall, and with the content gate in place it yields an honest
+        # ``abstract_only`` abstention rather than a fabricated verdict. It is
+        # also the URL the EZproxy and browser phases can most often rescue.
+        if doi:
+            pool.append(SourceCandidate(
+                url="https://doi.org/" + doi, source="doi_landing",
+                kind="publisher_landing",
+            ))
+
+        ranked = rank_and_dedupe(pool, limit=MAX_RESOLUTION_CANDIDATES)
+
+        # Google Scholar costs seconds and a browser tab, so it runs only when
+        # the cheap resolvers left us with nothing worth trying — and only when
+        # explicitly enabled (ASV_ENABLE_SCHOLAR), because it has never returned
+        # a usable link on this corpus and now sits on the run's critical path.
+        if (
+            ENABLE_GOOGLE_SCHOLAR
+            and len(ranked) < THIN_CANDIDATE_POOL
+            and self.browser_searcher is not None
+        ):
+            scholar_query = self._build_scholar_query(parsed, clean_text)
+            logger.info("  Thin candidate pool — trying Google Scholar: %r", scholar_query)
             try:
-                results = self.browser_searcher.search_google_scholar(scholar_query, top_k=3)
-                if results:
-                    candidates = list(results)
-                    logger.info(f"  Browser fallback: {len(candidates)} candidate(s)")
+                for url in self.browser_searcher.search_google_scholar(scholar_query, top_k=3):
+                    pool.append(SourceCandidate(
+                        url=url, source="google_scholar", kind="search_guess",
+                    ))
             except Exception as e:
-                logger.warning(f"  Browser fallback failed: {e}")
+                logger.warning("  Browser fallback failed: %s", e)
+            ranked = rank_and_dedupe(pool, limit=MAX_RESOLUTION_CANDIDATES)
 
-        candidates = self._dedupe_preserve_order(candidates)
+        for c in ranked:
+            host = (urlparse(c.url).netloc or "").lower()
+            if host:
+                self.resolved_hosts.add(host)
 
-        if candidates:
-            logger.info(f"  ✓ Resolved {len(candidates)} candidate URL(s): {candidates[0]}"
-                        + (f" (+{len(candidates)-1} fallback)" if len(candidates) > 1 else ""))
+        if ranked:
+            logger.info(
+                "  Resolved %d candidate(s); best is %s [%s]",
+                len(ranked), ranked[0].url[:90], ranked[0].kind,
+            )
         else:
-            logger.info("  ✗ No URL found (APIs + browser exhausted)")
+            logger.info("  No URL found (all resolvers exhausted)")
 
-        return candidates
-
-    def _resolve_from_doi(self, doi: str, *, skip_ss: bool = False) -> list[str]:
-        """
-        Merge Unpaywall + Semantic-Scholar-by-DOI + CrossRef candidates for one DOI.
-        Unpaywall goes first because it surfaces repository mirrors (PMC/arXiv) that
-        skip publisher paywalls; SS/CrossRef fill in when Unpaywall lacks OA data.
-        """
-        out: list[str] = []
-        out.extend(self._try_unpaywall(doi))
-        if not skip_ss:
-            out.extend(self._try_semantic_scholar_by_doi(doi))
-        out.extend(self._try_crossref(doi))
-        return out
-
-    @staticmethod
-    def _dedupe_preserve_order(urls: list[str]) -> list[str]:
-        seen = set()
-        out = []
-        for u in urls:
-            if u and u not in seen:
-                seen.add(u)
-                out.append(u)
-        return out
+        self._resolution_cache[cache_key] = ranked
+        return list(ranked)
 
     # ------------------------------------------------------------------
     # LLM-based citation parsing
     # ------------------------------------------------------------------
 
     def _parse_citation_with_llm(self, raw_text: str) -> Dict[str, Any]:
-        """
-        Parse a bibliography-formatted citation string into {title, first_author, year, journal, doi}.
-        Cached per raw_text so batched claims sharing one citation don't re-parse.
+        """Parse a bibliography string into ``{title, first_author, year, journal, doi, type}``.
 
-        Returns an empty dict if no llm_client was provided or the LLM call fails — callers
-        must handle missing fields gracefully (the resolution cascade in find_url does).
+        Cached per input string so batched claims sharing one citation parse
+        once. Returns ``{}`` when no LLM is wired up or the call fails — every
+        caller handles missing fields.
         """
         if not raw_text:
             return {}
+        raw_text = normalise_reference(raw_text)
         if raw_text in self._parse_cache:
             return self._parse_cache[raw_text]
         if self.llm_client is None:
@@ -231,7 +279,7 @@ class AcademicPaperFinder:
             "Reference strings extracted from PDFs often lose the spaces at field "
             "boundaries (e.g. 'J Virol1999; 73: 2181' means journal 'J Virol', year "
             "1999, volume 73, first page 2181) — split them correctly.\n\n"
-            f"Citation: {raw_text}\n\n"
+            "Citation: " + raw_text + "\n\n"
             'Example output: {"title": "Gene delivery using herpes simplex virus vectors", '
             '"first_author": "Burton", "year": 2002, "journal": "DNA Cell Biol", '
             '"volume": "21", "first_page": "915", "last_page": "936", "doi": null, '
@@ -247,7 +295,7 @@ class AcademicPaperFinder:
             if not isinstance(result, dict):
                 result = {}
         except Exception as e:
-            logger.debug(f"  Citation parse failed: {e}")
+            logger.debug("  Citation parse failed: %s", e)
             result = {}
 
         self._parse_cache[raw_text] = result
@@ -256,39 +304,52 @@ class AcademicPaperFinder:
     def _resolve_doi_via_crossref(
         self, parsed: Dict[str, Any], raw_fallback: str
     ) -> Optional[str]:
-        """
-        Use CrossRef's bibliographic search to resolve a citation string to a DOI.
-        Builds a tight 'query.bibliographic' string from LLM-parsed fields when available,
-        falls back to the raw citation otherwise. Returns the top hit's DOI or None.
+        """Crossref bibliographic search, with a sanity check on the hit.
 
-        CrossRef is free, requires no API key, and indexes ~140M scholarly works.
+        Crossref always returns *something* for a bibliographic query, so taking
+        the top row unconditionally is how a reference to a 1982 Cell paper ends
+        up resolving to an unrelated 2019 review. The returned title has to look
+        like the one we asked for before we believe it.
         """
-        if parsed.get("title"):
-            parts = [parsed["title"]]
+        params: Dict[str, Any] = {"rows": 3}
+        if creds.contact_email():
+            params["mailto"] = creds.contact_email()
+
+        title = parsed.get("title")
+        if title:
+            # Structured fields beat one blob: Crossref scores them separately
+            # and the author/container constraints throw out near-title matches
+            # from the wrong journal (F8).
+            params["query.bibliographic"] = title
             if parsed.get("first_author"):
-                parts.append(str(parsed["first_author"]))
-            if parsed.get("year"):
-                parts.append(str(parsed["year"]))
-            query = " ".join(parts)
+                params["query.author"] = str(parsed["first_author"])
+            if parsed.get("journal"):
+                params["query.container-title"] = str(parsed["journal"])
         else:
-            query = raw_fallback[:200]
+            params["query.bibliographic"] = raw_fallback[:200]
 
         try:
             resp = self._session.get(
-                "https://api.crossref.org/works",
-                params={"query.bibliographic": query, "rows": 1},
-                timeout=DOWNLOAD_TIMEOUT,
+                "https://api.crossref.org/works", params=params, timeout=DOWNLOAD_TIMEOUT
             )
-            if resp.status_code in (400, 404):
+            if resp.status_code >= 400:
                 return None
-            resp.raise_for_status()
             items = resp.json().get("message", {}).get("items", [])
-            if not items:
-                return None
-            return items[0].get("DOI")
         except Exception as e:
-            logger.debug(f"  CrossRef bibliographic error: {e}")
+            logger.debug("  Crossref bibliographic error: %s", e)
             return None
+
+        for item in items:
+            if not title:
+                return item.get("DOI")
+            candidate_title = (item.get("title") or [""])[0]
+            if title_matches(title, candidate_title):
+                return item.get("DOI")
+            logger.debug(
+                "  Crossref top hit rejected (title mismatch): %r vs %r",
+                title[:60], candidate_title[:60],
+            )
+        return None
 
     @staticmethod
     def _build_scholar_query(parsed: Dict[str, Any], raw_fallback: str) -> str:
@@ -297,7 +358,7 @@ class AcademicPaperFinder:
         author = parsed.get("first_author")
         year = parsed.get("year")
         if title:
-            parts = [f'"{title}"']
+            parts = ['"' + str(title) + '"']
             if author:
                 parts.append(str(author))
             if year:
@@ -306,198 +367,180 @@ class AcademicPaperFinder:
         return raw_fallback[:200]
 
     def fetch_with_cookies(self, url: str, timeout: int = DOWNLOAD_TIMEOUT) -> Optional[bytes]:
+        """Download *url* using institutional cookies for the matching domain.
+
+        Matching is now suffix-based: the old exact-netloc lookup meant a
+        ``nature.com`` entry silently missed every ``www.nature.com`` URL (F5).
         """
-        Attempt to download content at *url* using institutional cookies for the
-        matching domain.  Returns raw bytes on success, None on failure.
-        """
-        domain = urlparse(url).netloc
-        cookies = self._inst_cookies.get(domain, {})
+        domain = (urlparse(url).netloc or "").lower()
+        cookies: Dict[str, str] = {}
+        for host, jar in self._inst_cookies.items():
+            host = host.lower().lstrip(".")
+            if domain == host or domain.endswith("." + host):
+                cookies.update(jar)
         if not cookies:
-            logger.debug(f"No institutional cookies configured for {domain}")
+            logger.debug("No institutional cookies configured for %s", domain)
             return None
 
         try:
-            logger.info(f"  Trying institutional cookies for {domain} ...")
-            resp = self._session.get(url, cookies=cookies, timeout=timeout)
+            logger.info("  Trying institutional cookies for %s ...", domain)
+            resp = self._session.get(
+                url, cookies=cookies, timeout=timeout, browser_headers=True,
+            )
             resp.raise_for_status()
-            # Quick sanity check: if we got an HTML login page instead of content, bail
             ct = resp.headers.get("content-type", "")
             if "text/html" in ct and b"login" in resp.content[:4096].lower():
                 logger.warning("  Cookies present but server returned a login page — may be expired")
                 return None
-            logger.info(f"  ✓ Institutional download succeeded ({len(resp.content)} bytes)")
+            logger.info("  ✓ Institutional download succeeded (%d bytes)", len(resp.content))
             return resp.content
         except Exception as e:
-            logger.warning(f"  Institutional cookie fetch failed: {e}")
+            logger.warning("  Institutional cookie fetch failed: %s", e)
             return None
 
     # ------------------------------------------------------------------
-    # Resolution steps
+    # Individual resolvers
     # ------------------------------------------------------------------
 
-    # Publisher domains that routinely reject unauthenticated requests. Ranked
-    # last so we try repository/preprint mirrors first.
-    _PAYWALL_HOSTS = (
-        "wiley.com", "onlinelibrary.wiley.com",
-        "sciencedirect.com", "elsevier.com",
-        "springer.com", "link.springer.com",
-        "nature.com",
-        "tandfonline.com",
-        "sagepub.com", "journals.sagepub.com",
-        "jamanetwork.com",
-        "cell.com",
-        "science.org",
-        "asm.org", "journals.asm.org",
-        "pnas.org",
-        "oup.com", "academic.oup.com",
-    )
+    def _try_unpaywall(self, doi: str) -> List[SourceCandidate]:
+        """All Unpaywall OA locations, each tagged with its host type.
 
-    @classmethod
-    def _is_paywall_host(cls, url: str) -> bool:
-        try:
-            host = urlparse(url).netloc.lower()
-        except Exception:
-            return False
-        return any(host.endswith(p) for p in cls._PAYWALL_HOSTS)
-
-    def _try_unpaywall(self, doi: str) -> list[str]:
+        Unpaywall's own ``host_type`` is authoritative here — it knows that a
+        given URL is a repository deposit rather than the publisher's copy, and
+        that is precisely the distinction the ranking turns on.
         """
-        Return all Unpaywall OA candidates for a DOI, ranked so repository mirrors
-        (PMC, arXiv, institutional repos) come before publisher URLs and PDFs come
-        before landing pages. Publisher URLs are still included as a last resort.
-        """
-        if not UNPAYWALL_EMAIL:
-            logger.debug("UNPAYWALL_EMAIL not set; skipping Unpaywall")
+        email = UNPAYWALL_EMAIL or creds.get("UNPAYWALL_EMAIL")
+        if not email:
+            logger.warning(
+                "  UNPAYWALL_EMAIL is not set — skipping Unpaywall, the single "
+                "largest source of open-access mirrors. Set it on the config page."
+            )
             return []
         try:
             resp = self._session.get(
-                f"{UNPAYWALL_API}/{doi}",
-                params={"email": UNPAYWALL_EMAIL},
+                UNPAYWALL_API + "/" + doi,
+                params={"email": email},
                 timeout=DOWNLOAD_TIMEOUT,
             )
-            if resp.status_code == 404:
+            if resp.status_code >= 400:
                 return []
-            resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            logger.debug(f"  Unpaywall error: {e}")
+            logger.debug("  Unpaywall error: %s", e)
             return []
 
-        locations = data.get("oa_locations") or []
-        # Rank: repository host_type first, then PDF over landing.
-        def rank(loc):
-            is_repo = 0 if loc.get("host_type") == "repository" else 1
-            has_pdf = 0 if loc.get("url_for_pdf") else 1
-            return (is_repo, has_pdf)
+        locations = list(data.get("oa_locations") or [])
+        best = data.get("best_oa_location")
+        if best and best not in locations:
+            locations.insert(0, best)
 
-        sorted_locs = sorted(locations, key=rank)
+        out: List[SourceCandidate] = []
+        for loc in locations:
+            if not isinstance(loc, dict):
+                continue
+            host_type = "repository" if loc.get("host_type") == "repository" else None
+            pdf = loc.get("url_for_pdf")
+            if pdf:
+                out.append(SourceCandidate(
+                    url=pdf, source="unpaywall",
+                    kind=classify(pdf, is_pdf=True, host_type=host_type),
+                ))
+            landing = loc.get("url_for_landing_page") or loc.get("url")
+            if landing:
+                out.append(SourceCandidate(
+                    url=landing, source="unpaywall",
+                    kind=classify(landing, is_pdf=False, host_type=host_type),
+                ))
+        if out:
+            logger.debug("  Unpaywall: %d candidate(s)", len(out))
+        return out
 
-        urls: list[str] = []
-        for loc in sorted_locs:
-            for key in ("url_for_pdf", "url_for_landing_page", "url"):
-                u = loc.get(key)
-                if u:
-                    urls.append(u)
-                    break
-
-        # Fall back to best_oa_location if oa_locations was empty
-        if not urls:
-            loc = data.get("best_oa_location") or {}
-            u = loc.get("url_for_pdf") or loc.get("url_for_landing_page")
-            if u:
-                urls.append(u)
-
-        if urls:
-            logger.debug(f"  Unpaywall: {len(urls)} candidate(s); top={urls[0]}")
-        return urls
-
-    def _try_semantic_scholar_by_doi(self, doi: str) -> list[str]:
+    def _try_semantic_scholar_by_doi(self, doi: str) -> List[SourceCandidate]:
         try:
             resp = self._session.get(
-                f"{SEMANTIC_SCHOLAR_API}/paper/DOI:{doi}",
+                SEMANTIC_SCHOLAR_API + "/paper/DOI:" + doi,
                 params={"fields": "openAccessPdf,externalIds"},
+                headers=self._s2_headers,
                 timeout=DOWNLOAD_TIMEOUT,
             )
-            if resp.status_code in (404, 400):
+            if resp.status_code >= 400:
                 return []
-            resp.raise_for_status()
-            data = resp.json()
-            oa = data.get("openAccessPdf") or {}
-            url = oa.get("url")
-            if url:
-                logger.debug(f"  Semantic Scholar hit: {url}")
-                return [url]
-            return []
+            url = (resp.json().get("openAccessPdf") or {}).get("url")
         except Exception as e:
-            logger.debug(f"  Semantic Scholar (DOI) error: {e}")
+            logger.debug("  Semantic Scholar (DOI) error: %s", e)
             return []
+        if not url:
+            return []
+        return [SourceCandidate(
+            url=url, source="semantic_scholar", kind=classify(url, is_pdf=True),
+        )]
 
-    def _try_crossref(self, doi: str) -> list[str]:
+    def _try_crossref(self, doi: str) -> List[SourceCandidate]:
+        """PDF links the publisher registered with Crossref.
+
+        The DOI landing URL (``message.URL``) is not taken from here — it is
+        appended once, last, by ``find_candidates``, so it cannot displace a
+        repository mirror.
+        """
         try:
-            resp = self._session.get(
-                f"{CROSSREF_API}/{doi}",
-                timeout=DOWNLOAD_TIMEOUT,
-            )
-            if resp.status_code == 404:
+            resp = self._session.get(CROSSREF_API + "/" + doi, timeout=DOWNLOAD_TIMEOUT)
+            if resp.status_code >= 400:
                 return []
-            resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            logger.debug(f"  CrossRef error: {e}")
+            logger.debug("  Crossref error: %s", e)
             return []
 
-        urls: list[str] = []
+        out: List[SourceCandidate] = []
         for link in data.get("message", {}).get("link", []):
             ct = link.get("content-type", "")
             u = link.get("URL")
             if u and ("pdf" in ct or "pdf" in u.lower()):
-                urls.append(u)
-
-        # Skip the DOI landing URL (message.URL). It resolves to the publisher
-        # landing page, which is almost never a direct download and — with an
-        # Accept header requesting JSON — content-negotiates to CrossRef
-        # metadata that downstream code can mistake for a real payload.
-
-        if urls:
-            logger.debug(f"  CrossRef: {len(urls)} candidate(s)")
-        return urls
+                out.append(SourceCandidate(
+                    url=u, source="crossref", kind=classify(u, is_pdf=True),
+                ))
+        return out
 
     def _try_semantic_scholar_by_text(
-        self, raw_text: str
-    ) -> "tuple[list[str], Optional[str]]":
-        """
-        Title-based search when no DOI is available.
-
-        Returns (oa_pdf_urls, recovered_doi). The list may be empty; the DOI is
-        useful even when no OA PDF is published — callers can retry Unpaywall / CrossRef with it.
-        """
+        self, raw_text: str, expected_title: Optional[str] = None
+    ) -> Tuple[List[SourceCandidate], Optional[str]]:
+        """Title search. Returns candidates plus any DOI recovered along the way —
+        the DOI is useful even when no OA PDF exists, because the other resolvers
+        are all DOI-keyed."""
         if not raw_text or len(raw_text) < 10:
             return [], None
-        query = raw_text[:150]
         try:
             resp = self._session.get(
-                f"{SEMANTIC_SCHOLAR_API}/paper/search",
-                params={"query": query, "fields": "openAccessPdf,externalIds", "limit": 3},
+                SEMANTIC_SCHOLAR_API + "/paper/search",
+                params={
+                    "query": raw_text[:150],
+                    "fields": "title,openAccessPdf,externalIds",
+                    "limit": 3,
+                },
+                headers=self._s2_headers,
                 timeout=DOWNLOAD_TIMEOUT,
             )
-            if resp.status_code in (400, 404):
+            if resp.status_code >= 400:
                 return [], None
-            resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            logger.debug(f"  Semantic Scholar (text) error: {e}")
+            logger.debug("  Semantic Scholar (text) error: %s", e)
             return [], None
 
-        recovered_doi: Optional[str] = None
-        urls: list[str] = []
+        recovered: Optional[str] = None
+        out: List[SourceCandidate] = []
         for paper in data.get("data", []):
-            oa = paper.get("openAccessPdf") or {}
-            url = oa.get("url")
+            # Only trust a recovered DOI when the row is plausibly the same
+            # work. Everything downstream is DOI-keyed, so a wrong one here
+            # ends with a claim judged against the wrong paper.
+            same_work = title_matches(expected_title or raw_text, paper.get("title"))
             ext = paper.get("externalIds") or {}
-            if recovered_doi is None and ext.get("DOI"):
-                recovered_doi = ext["DOI"]
-            if url:
-                urls.append(url)
-        if urls:
-            logger.debug(f"  Semantic Scholar text-search: {len(urls)} candidate(s)")
-        return urls, recovered_doi
+            if recovered is None and ext.get("DOI") and same_work:
+                recovered = ext["DOI"]
+            url = (paper.get("openAccessPdf") or {}).get("url")
+            if url and same_work:
+                out.append(SourceCandidate(
+                    url=url, source="semantic_scholar", kind=classify(url, is_pdf=True),
+                ))
+        return out, recovered
+

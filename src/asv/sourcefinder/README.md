@@ -174,11 +174,12 @@ This cuts ~20–30% nav chrome from Nature/Springer landing pages and starts the
 
 **`download_with_resolution` cascade:**
 1. Try `citation_details.url` directly if present
-2. Ask `AcademicPaperFinder.find_urls` for a ranked list of open-access candidates (Unpaywall repository mirrors → publisher PDFs → title fallback)
+2. Ask `AcademicPaperFinder.find_candidates` for a ranked candidate list (full-text XML → repository PDFs → publisher PDFs → landing pages)
 3. If `INSTITUTIONAL_COOKIES` env var is set, try the DOI landing page with those cookies
 4. **Playwright browser fallback** — retry each previously-attempted URL through the authenticated browser context. This step is what makes the manual login flow actually pay off at download time: the orchestrator harvests cookies from the Playwright context right after login and mirrors them into every `requests.Session`, but any candidate that still 4xx-ed under those cookies is retried here through Playwright's `APIRequestContext` (which reuses the browser's storage state). Capped at 5 URLs per batch.
-5. Return the first candidate that both fetches successfully *and* passes the 200-char extraction gate
-6. Along the way, record every attempt (URL, source label, downloaded flag, error) into `result['attempts']` for manifest logging
+5. **EZproxy** (only when `EZPROXY_HOST` is set and nothing above produced bytes) — rewrite still-failing publisher URLs through the library proxy and retry them in the browser, so the user's SSO applies. Capped at `EZPROXY_MAX_PER_RUN` per run; never applied to open-access aggregators or `doi.org`.
+6. Keep the **best** candidate by content quality, not the first that fetched, stopping early the moment full text appears (Tier 0.3 §4.4)
+7. Along the way, record every attempt (URL, resolver label, content quality, downloaded flag, error) into `result['attempts']` for manifest logging
 
 **API:**
 ```python
@@ -224,19 +225,105 @@ result = downloader.download_with_resolution(
 ### academic_paper_finder.py
 Resolves a raw citation string (or DOI) to a ranked list of publicly-accessible PDF/HTML URLs. Used by both `TextDownloader.download_with_resolution` (for cited-qualitative and paper-backed cited-quantitative) and by the dataset-backed quant flow's fallback (when the direct dataset URL fails).
 
-**Resolution cascade:**
-1. Regex-extract DOI from citation text (no LLM cost) → try Unpaywall, Semantic Scholar, CrossRef
-2. LLM-parsed DOI (catches DOIs the regex misses) → same three APIs
-3. LLM-parsed title → Semantic Scholar text search (also recovers the DOI)
+**Union-then-rank, not first-hit-wins** (SOURCE_ACQUISITION.md F1). The cascade used to
+guard every step with `if not candidates`, so one publisher URL from Unpaywall shadowed
+every other resolver — 32 of 51 batches ended up with exactly one candidate, and a single
+403 killed the batch. Now:
 
-**Ranking:** Unpaywall repository mirrors (`host_type == "repository"`) rank ahead of publisher landing pages. Within a host, PDFs (`url_for_pdf`) rank ahead of landing pages (`url_for_landing_page`).
+1. Establish a DOI from whatever has one: the Tier 0.6 audit, a regex, the LLM parse,
+   Europe PMC, OpenAlex, Semantic Scholar, or a Crossref bibliographic search (whose top
+   hit is rejected unless its title actually matches).
+2. Ask **every** resolver: `fulltext_apis.FullTextAPIs` (Europe PMC, PMC ID converter,
+   NCBI efetch, OpenAlex, CORE, arXiv, and the keyed Wiley/Elsevier/Springer TDM
+   endpoints), then Unpaywall, Semantic Scholar and Crossref.
+3. Dedupe by normalised URL and sort by **kind**, capped at `MAX_RESOLUTION_CANDIDATES`.
+4. Google Scholar runs only if the pool is thinner than `THIN_CANDIDATE_POOL` — it costs
+   seconds and a browser tab.
 
-**Explicitly excluded from CrossRef output:** the DOI landing URL (`message.URL`, i.e. `https://doi.org/...`). That URL redirects to the publisher's landing page — almost never a direct download — and its inclusion previously triggered content-negotiation issues (see `DatasetDownloader` Accept header note above). PDF links inside the CrossRef record are still included.
+**Ranking** is the `kind` on each `SourceCandidate`, and it is what decides the order —
+not which resolver answered first:
+
+    fulltext_xml > repository_pdf > repository_landing
+                 > publisher_pdf  > publisher_landing  > search_guess
+
+`fulltext_xml` is Europe PMC / NCBI JATS: publisher-structured full text with no PDF
+layout to reconstruct and no landing-page chrome to strip. Unpaywall's and OpenAlex's own
+`host_type` decides repository-vs-publisher when they supply it.
+
+Resolution is **cached per citation string**, which is what makes the orchestrator's
+up-front resolution pass free — it resolves everything to decide which publishers need a
+login, and the per-batch calls that follow are cache hits.
+
+**The DOI landing URL** (`https://doi.org/...`) is no longer taken from CrossRef's
+`message.URL`; it is appended once, **last**, by `find_candidates`. Ranked as
+`publisher_landing` it can never displace a repository mirror, and with the content gate
+in place it yields an honest `abstract_only` abstention rather than a fabricated verdict —
+while remaining the URL the EZproxy and browser phases can most often rescue. PDF links
+inside the CrossRef record are still included as `publisher_pdf`.
+
+### polite_http.py
+The shared HTTP layer every outbound fetch in this package goes through
+(SOURCE_ACQUISITION.md F7). One **process-wide** per-host clock — the audit, the resolver
+and the downloader used to hold one each, so "1 request per host per second" was really
+three — plus retry with backoff on 429/5xx honouring `Retry-After`, and an on-disk
+response cache under `runs/_cache/http/`.
+
+Three decisions worth knowing:
+
+- **A 403 is never retried.** Publishers return it deterministically for unauthenticated
+  traffic; retrying only burns the host's patience.
+- **Only a 429 trips the per-host circuit breaker.** Europe PMC answers **500**, not 404,
+  for an article outside its OA full-text subset — counting 5xx disabled the
+  highest-yield source in the pipeline three non-OA articles into a run.
+- **The cache key includes query params and an auth generation.** Params, because every
+  index client passes its query that way and a bare-URL key served one paper's record for
+  every lookup. Auth generation, because session cookies live in the jar rather than in
+  the call, so without it the 403s recorded before the user logged in would be replayed
+  from disk *after* they logged in and the manual login would appear to do nothing —
+  `_bridge_browser_cookies` bumps it.
+
+Two user agents, chosen per service: `BROWSER_UA` for pages meant for humans (publishers
+gate on UA shape), and `api_user_agent()` for registries. This is not cosmetic — Zenodo's
+API returns **403 to the Chrome string and 200 to a descriptive research agent**.
+
+### fulltext_apis.py
+The Tier 1/2 full-text locators (SOURCE_ACQUISITION.md §6). Where `index_clients.py`
+answers *"does this reference exist?"*, this answers *"where can I read it?"*: Europe PMC,
+the PMC ID converter, NCBI `efetch`, OpenAlex (every `location`, not just the best), CORE,
+arXiv, and the keyed Wiley / Elsevier / Springer TDM endpoints.
+
+Everything returns `SourceCandidate(url, source, kind)`, and `rank_and_dedupe` is the
+ranking function the resolver uses. Endpoint shapes here were verified live, and two are
+easy to get wrong: Europe PMC full text is `/webservices/rest/{PMCID}/fullTextXML` (the
+PMCID alone in the path — the `/{source}/{id}/` form 404s), and Figshare's article search
+is **POST** with a JSON body (the GET form 404s with a routing error that reads like "no
+results").
+
+`europepmc.org` article URLs from any resolver are rewritten to the `www.ebi.ac.uk` REST
+equivalent, because the website is behind a Cloudflare challenge that 403s every scripted
+request while the REST mirror serves the same article as JATS.
+
+### reference_text.py
+Repairs PDF-extraction damage in a reference string before any parser sees it
+(SOURCE_ACQUISITION.md F8) — `vectors.DNA Cell Biol2002` → `vectors. DNA Cell Biol 2002`,
+mojibake, replacement characters. Applied by both the resolver and the Tier 0.6 audit.
+Every rule is chosen so the failure mode is "no change" rather than "different
+corruption": DOIs and URLs are masked out first, and a space is inserted at a
+lowercase→uppercase boundary only when the lowercase run is long enough to be a word, so
+`McGraw-Hill` survives.
 
 ### browser_searcher.py
 Playwright-backed browser used for two purposes:
-1. **Fallback source search** — Google Scholar / Zenodo / Figshare / HuggingFace searches when the API cascades in `dataset_finder`, `text_finder`, and `academic_paper_finder` return nothing. LLM ranks the raw links on each results page.
-2. **Human-in-the-loop paywall login + authenticated download**. At pipeline startup, `ClaimOrchestrator._setup_browser_searcher` detects which `KNOWN_PAYWALL_DOMAINS` appear in the citations and opens a non-headless Chromium with a tab per domain. The user logs in manually, presses Enter, and the pipeline then:
+1. **Fallback source search** — Google Scholar only, and only when the candidate pool is
+   thin. The Zenodo / Figshare / HuggingFace scrapes are gone: they returned zero links
+   100% of the time because all three are client-rendered SPAs and `domcontentloaded`
+   fires before results render. `dataset_finder` now calls their JSON APIs directly.
+2. **Human-in-the-loop paywall login + authenticated download**. After the resolution
+   pass, `ClaimOrchestrator._paywall_login_checkpoint` intersects `KNOWN_PAYWALL_DOMAINS`
+   with the hosts resolution actually produced and opens a non-headless Chromium with a
+   tab per domain. (It used to substring-match those domains against *bibliography text*,
+   which contains journal names rather than URLs — it logged "no known paywall domains
+   detected" and then 403'd 41 times.) The user logs in manually, presses Enter, and the pipeline then:
    - Calls `BrowserSearcher.export_cookies()` to harvest every cookie the browser context now holds.
    - Bridges those cookies into `TextDownloader.session`, `AcademicPaperFinder._session`, and `DatasetDownloader.session` — every `requests.Session` in the pipeline — so subsequent `session.get()` calls carry the user's real login state.
    - Mirrors the same cookies into `AcademicPaperFinder._inst_cookies` (keyed by domain, leading dot stripped) so `fetch_with_cookies()` finds them by netloc.

@@ -155,8 +155,14 @@ def _claim(cid, citation_id=None, quantitative=False, original=False) -> ClaimOb
 def orchestrator(tmp_path, monkeypatch):
     monkeypatch.setattr(co, "LLMClient", StubLLM)
     monkeypatch.setattr(co, "ReferenceVerifier", StubReferenceVerifier)
-    monkeypatch.setattr(co.ClaimOrchestrator, "_setup_browser_searcher",
-                        lambda self, claims, citations: None)
+    # The browser lifecycle is now three steps (start / resolve / login) rather
+    # than one, so the paywall machinery can key off hosts that resolution
+    # actually produced. All three are no-ops offline.
+    monkeypatch.setattr(co.ClaimOrchestrator, "_start_browser", lambda self: None)
+    monkeypatch.setattr(co.ClaimOrchestrator, "_resolution_prepass",
+                        lambda self, claims: None)
+    monkeypatch.setattr(co.ClaimOrchestrator, "_paywall_login_checkpoint",
+                        lambda self: None)
 
     run_paths = RunPaths.for_pdf("paper.pdf", runs_root=tmp_path)
     orc = co.ClaimOrchestrator(run_paths=run_paths)
@@ -302,3 +308,25 @@ def test_results_are_readable_by_the_api(orchestrator):
     judged = [r for r in rows if r.result.verdict != Verdict.NOT_CHECKABLE]
     assert len(judged) == 2
     assert all(r.result.evidence for r in judged)
+
+
+def test_a_browser_that_will_not_launch_costs_the_login_not_the_run(tmp_path, monkeypatch):
+    """The login checkpoint runs after the bibliography audit and the resolution
+    pass — half an hour of work on a real corpus. A Playwright failure there must
+    degrade to unauthenticated fetching, not lose all of it."""
+    monkeypatch.setattr(co, "LLMClient", StubLLM)
+    monkeypatch.setattr(co, "ReferenceVerifier", StubReferenceVerifier)
+    run_paths = RunPaths.for_pdf("paper.pdf", runs_root=tmp_path)
+    orc = co.ClaimOrchestrator(run_paths=run_paths)
+
+    class ExplodingBrowser:
+        def open_domains(self, domains):
+            raise RuntimeError("playwright is not installed")
+
+    orc.browser_searcher = ExplodingBrowser()
+    orc.text_downloader._paper_finder.resolved_hosts = {"www.nature.com"}
+
+    orc._paywall_login_checkpoint()  # must not raise
+
+    assert orc.browser_searcher is None
+    assert orc.text_downloader._paper_finder.browser_searcher is None
