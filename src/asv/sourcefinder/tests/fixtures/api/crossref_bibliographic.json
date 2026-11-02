@@ -1,0 +1,66 @@
+{
+  "status": "ok",
+  "message-type": "work-list",
+  "message": {
+    "facets": {},
+    "total-results": 10409184,
+    "items": [
+      {
+        "DOI": "10.31219/osf.io/29jnp",
+        "title": [
+          "Why most pre-published research findings are false."
+        ],
+        "issued": {
+          "date-parts": [
+            [
+              2020,
+              4,
+              26
+            ]
+          ]
+        },
+        "URL": "https://doi.org/10.31219/osf.io/29jnp",
+        "type": "posted-content",
+        "author": [
+          {
+            "given": "Sebastian",
+            "family": "Lobentanzer",
+            "sequence": "first"
+          }
+        ]
+      },
+      {
+        "DOI": "10.1371/journal.pmed.0020124",
+        "title": [
+          "Why Most Published Research Findings Are False"
+        ],
+        "issued": {
+          "date-parts": [
+            [
+              2005,
+              8,
+              30
+            ]
+          ]
+        },
+        "container-title": [
+          "PLoS Medicine"
+        ],
+        "URL": "https://doi.org/10.1371/journal.pmed.0020124",
+        "type": "journal-article",
+        "author": [
+          {
+            "given": "John P. A.",
+            "family": "Ioannidis",
+            "sequence": "first"
+          }
+        ]
+      }
+    ],
+    "items-per-page": 2,
+    "query": {
+      "start-index": 0,
+      "search-terms": null
+    }
+  }
+}

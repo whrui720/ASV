@@ -3,7 +3,10 @@
 **Status:** Phases 0–4 implemented 2026-09-23. See
 [§10 Implementation status](#10--implementation-status) for what shipped, what
 was measured, and the endpoint facts that turned out to be wrong when checked
-against the live services.
+against the live services. [§11](#11--full-run-measurement-and-api-access-status-2026-11-01)
+has the first full-run measurement (1 of 51 batches reached full text) and the current
+status of every credential. §§1–9 describe the system *before* the 2026-09-23 changes
+and are kept as the analysis of record.
 **Date:** 2026-09-01 (analysis), 2026-09-23 (implementation).
 **Scope:** how ASV finds and downloads the two kinds of evidence it validates against —
 *text sources* (the cited papers) and *data sources* (tabular datasets) — why the hit rate
@@ -533,11 +536,87 @@ it, recovered 8.2k chars per Nature page.
   them for the reference audit, but the *acquisition* path does not yet skip
   book chapters.
 - Persisting Playwright `storage_state()` across runs (F5's second half).
+- Support for an OpenAlex API key, which the service has required since 2026-02-13
+  (listed here 2026-11-01; see §11).
 - Google Scholar is **off by default** (`ASV_ENABLE_SCHOLAR=1` to re-enable),
   per F4's "retire it or gate it behind an explicit opt-in flag". Gated rather
   than deleted because it remains the only route for a reference no index
   carries. Now that resolution runs as an up-front pass, leaving it on meant
   ~14 CAPTCHA-prone browser searches before the run could start.
+
+---
+
+## 11 — Full-run measurement and API access status (2026-11-01)
+
+§10's numbers came from 15 citations with no optional credentials. The first full run
+since then is `runs/hsv_cancer__20260923_204743`: all 51 text batches, with
+`UNPAYWALL_EMAIL` and `EZPROXY_HOST` set and no other optional keys.
+
+| | Batches |
+|---|---:|
+| fetched something | 28 / 51 |
+| graded `full_text` | **1 / 51** (won by Unpaywall) |
+| graded `abstract_only` | 25 |
+| graded `paywall_interstitial` | 2 |
+
+Attempts by source (one batch makes several):
+
+| Source | Attempts | Fetched | Notes |
+|---|---:|---:|---|
+| browser retry | 119 | 37 | 77 "returned no content"; the wins were re-fetches of URLs that had already returned an abstract |
+| ezproxy | 40 | 0 | 33 "returned no content (SSO session may be missing)"; the 40-fetch budget was spent before any proxied fetch carried a session |
+| crossref | 26 | 5 | 20 × 403 |
+| europepmc | 25 | 3 | 20 × 403. The article-page URLs are still reaching the Cloudflare-fronted site |
+| doi_landing | 24 | 11 | all abstracts or landing pages |
+| unpaywall | 17 | 3 | the run's only full text |
+| semantic_scholar | 14 | 6 | |
+| europepmc_fulltext | 12 | 0 | all 500, i.e. outside the Europe PMC OA subset (§10 item 2) |
+| pmc_efetch | 12 | 12 | **all `abstract_only`**: 1.0–2.4k chars, no section headings. Same 12 articles as the 500s above |
+| openalex | 0 | — | see below |
+| core, wiley/elsevier/springer TDM | 0 | — | no keys set, so never attempted |
+
+What this says:
+
+1. **OpenAlex contributed nothing because it now requires an API key.** Since 2026-02-13
+   every OpenAlex request needs a free key (openalex.org/settings/api); the `mailto`
+   polite pool is retired. The "90-second anonymous response" in §10 item 5 was probably
+   this. ASV still sends only `mailto`, and in this run the circuit breaker tripped on
+   `api.openalex.org` during the resolution pass. Fix: add `OPENALEX_API_KEY` to
+   `core/credentials.py`, send it as `api_key` from `fulltext_apis.py` and
+   `index_clients.py`, and gate OpenAlex on the key instead of the contact email. The
+   bibliography audit uses OpenAlex too.
+2. **PMC deposits outside the OA subset are dead ends.** Twelve references (old
+   *J Virol*-era articles) resolve to a PMCID, but efetch returns front matter only and
+   Europe PMC's `fullTextXML` returns 500. Retrieving those automatically isn't permitted
+   under PMC's terms. The legitimate routes are the publisher through EZproxy, or the
+   operator rescue lane (Phase 5).
+3. **EZproxy hasn't worked end to end yet.** Every proxied fetch so far ran without an SSO
+   session. Before spending the budget, confirm the Playwright context is actually logged
+   in to the proxy. The persisted `storage_state()` work (F5) is the structural fix.
+4. **Unused keys.** Of the credentials in `.env.example`, only `UNPAYWALL_EMAIL` and
+   `EZPROXY_HOST` were set for this run. `SEMANTIC_SCHOLAR_API_KEY` was added afterwards
+   (commit `5c6e83b`). `CORE_API_KEY`, `PUBMED_API_KEY` and the publisher TDM keys are
+   still unset, so no run has measured what they add.
+
+### Access status by service
+
+| Service | Needs | Status |
+|---|---|---|
+| Unpaywall, Crossref | contact email | ✅ set |
+| Semantic Scholar | key (optional) | ✅ set |
+| EZproxy | `EZPROXY_HOST` + a live SSO session | ⚠️ host set; session never established in a run |
+| OpenAlex | **API key, required since 2026-02-13** | ❌ no key, and no code support for one |
+| CORE | key (keyless is skipped) | ❌ not obtained |
+| NCBI / PubMed | key (optional, 3 → 10 req/s) | ❌ not obtained |
+| Wiley TDM | token | ❌ not obtained |
+| Elsevier | API key; institutional token for off-campus entitlement | ❌ not obtained. The insttoken comes from Elsevier through the library, not self-service |
+| Springer Nature | key (OA endpoint only) | ❌ not obtained |
+| Kaggle | username + key | ❌ not obtained. Low value for a biomedical corpus |
+| Europe PMC, PMC idconv, efetch, DataCite, Zenodo, Figshare, HuggingFace, arXiv | none | ✅ keyless |
+
+Proposed in §6 and never integrated (none needs a key): bioRxiv/medRxiv, DOAJ, Dryad,
+OpenAIRE, Open Library / HathiTrust / Google Books for book references (F9), and the
+public-statistics APIs (World Bank, Eurostat, WHO GHO, OECD; FRED needs a key).
 
 ---
 

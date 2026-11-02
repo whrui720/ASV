@@ -1,0 +1,84 @@
+{
+  "version": "6.9",
+  "hitCount": 1,
+  "request": {
+    "queryString": "DOI:\"10.1371/journal.pmed.0020124\"",
+    "resultType": "core"
+  },
+  "resultList": {
+    "result": [
+      {
+        "id": "16060722",
+        "source": "MED",
+        "pmid": "16060722",
+        "pmcid": "PMC1182327",
+        "doi": "10.1371/journal.pmed.0020124",
+        "title": "Why most published research findings are false.",
+        "authorString": "Ioannidis JP.",
+        "authorList": {
+          "author": [
+            {
+              "fullName": "Ioannidis JP",
+              "firstName": "John P A",
+              "lastName": "Ioannidis",
+              "initials": "JP"
+            }
+          ]
+        },
+        "journalInfo": {
+          "issue": "8",
+          "volume": "2",
+          "journalIssueId": 1251430,
+          "dateOfPublication": "2005 Aug",
+          "monthOfPublication": 8,
+          "yearOfPublication": 2005,
+          "journal": {
+            "medlineAbbreviation": "PLoS Med",
+            "title": "PLoS medicine",
+            "essn": "1549-1676",
+            "issn": "1549-1277",
+            "isoabbreviation": "PLoS Med",
+            "nlmid": "101231360"
+          },
+          "printPublicationDate": "2005-08-01"
+        },
+        "pubYear": "2005",
+        "pubTypeList": {
+          "pubType": [
+            "other",
+            "Journal Article"
+          ]
+        },
+        "isOpenAccess": "Y",
+        "inEPMC": "Y",
+        "inPMC": "Y",
+        "hasPDF": "Y",
+        "fullTextUrlList": {
+          "fullTextUrl": [
+            {
+              "availability": "Subscription required",
+              "availabilityCode": "S",
+              "documentStyle": "doi",
+              "site": "DOI",
+              "url": "https://doi.org/10.1371/journal.pmed.0020124"
+            },
+            {
+              "availability": "Open access",
+              "availabilityCode": "OA",
+              "documentStyle": "html",
+              "site": "Europe_PMC",
+              "url": "https://europepmc.org/articles/PMC1182327"
+            },
+            {
+              "availability": "Open access",
+              "availabilityCode": "OA",
+              "documentStyle": "pdf",
+              "site": "Europe_PMC",
+              "url": "https://europepmc.org/articles/PMC1182327?pdf=render"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

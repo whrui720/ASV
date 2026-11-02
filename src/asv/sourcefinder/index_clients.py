@@ -26,6 +26,7 @@ reading as an accusation of fabrication.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -124,6 +125,31 @@ def _year_from_crossref(node: Dict[str, Any]) -> Optional[int]:
     return None
 
 
+#: A trailing initials token: ``JP``, ``J.P.``, ``A``.
+_INITIALS = re.compile(r"^(?:[A-Z]\.?-?){1,4}$")
+
+
+def _surname_from_text(text: str) -> Optional[str]:
+    """Surname from a free-text name, whichever end it is on.
+
+    Three conventions reach this, and taking the last token for all of them —
+    which this used to do — turned every PubMed author into their initials:
+
+    * ``"Smith, A. B."`` / ``"Blasco Navarro, Javier"`` — surname before the comma
+    * ``"Ioannidis JP"`` (PubMed esummary, Europe PMC) — surname, then initials
+    * ``"John P. A. Ioannidis"`` (OpenAlex) — surname last
+    """
+    text = text.strip()
+    if not text:
+        return None
+    if "," in text:
+        return text.split(",", 1)[0].strip() or None
+    tokens = text.split()
+    if len(tokens) > 1 and _INITIALS.match(tokens[-1]):
+        return " ".join(tokens[:-1])
+    return tokens[-1]
+
+
 def _surname(name: Any) -> Optional[str]:
     """Best-effort surname from the many author shapes these APIs return."""
     if isinstance(name, dict):
@@ -131,12 +157,9 @@ def _surname(name: Any) -> Optional[str]:
             if name.get(key):
                 return str(name[key])
         display = name.get("display_name") or name.get("name") or name.get("literal")
-        if display:
-            return str(display).split()[-1].strip(",")
-        return None
-    if isinstance(name, str) and name.strip():
-        # "Smith AB" (PubMed) or "Smith, A. B." — surname leads in both.
-        return name.replace(",", " ").split()[0]
+        return _surname_from_text(str(display)) if display else None
+    if isinstance(name, str):
+        return _surname_from_text(name)
     return None
 
 
@@ -323,7 +346,12 @@ class BibliographicIndexes:
             year=year,
             doi=node.get("doi"),
             pmid=node.get("pmid"),
-            container=node.get("journalTitle"),
+            # ``resultType=core`` nests the journal under ``journalInfo``; the flat
+            # ``journalTitle`` came back absent on every core record probed.
+            container=(
+                node.get("journalTitle")
+                or (((node.get("journalInfo") or {}).get("journal") or {}).get("title"))
+            ),
             url=(f"https://doi.org/{node['doi']}" if node.get("doi") else node.get("fullTextUrl")),
             work_type=_first(pub_types),
             is_retracted=retracted,
@@ -361,9 +389,12 @@ class BibliographicIndexes:
         return self.pubmed_summary([pmid])
 
     def pubmed_esearch(self, term: str) -> IndexResponse:
+        # esearch defaults to newest-first. For a well-known title that means the
+        # top few rows are recent papers echoing it, and the cited original
+        # falls outside ``retmax`` — verified live for Ioannidis 2005.
         params = {
             "db": "pubmed", "term": term[:400], "retmode": "json",
-            "retmax": REFCHECK_MAX_CANDIDATES,
+            "retmax": REFCHECK_MAX_CANDIDATES, "sort": "relevance",
         }
         if PUBMED_API_KEY:
             params["api_key"] = PUBMED_API_KEY

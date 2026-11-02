@@ -1,0 +1,153 @@
+{
+  "meta": {
+    "count": 1,
+    "page": 1,
+    "per_page": 1
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W2144981148",
+      "doi": "https://doi.org/10.1371/journal.pmed.0020124",
+      "title": "Why Most Published Research Findings Are False",
+      "display_name": "Why Most Published Research Findings Are False",
+      "publication_year": 2005,
+      "ids": {
+        "openalex": "https://openalex.org/W2144981148",
+        "doi": "https://doi.org/10.1371/journal.pmed.0020124",
+        "mag": "2144981148",
+        "pmid": "https://pubmed.ncbi.nlm.nih.gov/16060722"
+      },
+      "type": "article",
+      "is_retracted": false,
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5070446713",
+            "display_name": "John P. A. Ioannidis",
+            "orcid": "https://orcid.org/0000-0003-3118-6859"
+          }
+        }
+      ],
+      "primary_location": {
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1371/journal.pmed.0020124",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S197939330",
+          "display_name": "PLoS Medicine",
+          "type": "journal",
+          "host_organization_name": "Public Library of Science"
+        },
+        "license": "cc-by",
+        "version": "publishedVersion"
+      },
+      "locations": [
+        {
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1371/journal.pmed.0020124",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S197939330",
+            "display_name": "PLoS Medicine",
+            "type": "journal",
+            "host_organization_name": "Public Library of Science"
+          },
+          "license": "cc-by",
+          "version": "publishedVersion"
+        },
+        {
+          "is_oa": false,
+          "landing_page_url": "https://pubmed.ncbi.nlm.nih.gov/16060722",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306525036",
+            "display_name": "PubMed",
+            "type": "repository",
+            "host_organization_name": "National Institutes of Health"
+          },
+          "license": null,
+          "version": "publishedVersion"
+        },
+        {
+          "is_oa": true,
+          "landing_page_url": "https://journals.plos.org/plosmedicine/article?id=10.1371/journal.pmed.0020124",
+          "pdf_url": "https://journals.plos.org/plosmedicine/article/file?id=10.1371/journal.pmed.0020124&type=printable",
+          "source": {
+            "id": "https://openalex.org/S4306401271",
+            "display_name": "RePEc: Research Papers in Economics",
+            "type": "repository",
+            "host_organization_name": "Federal Reserve Bank of St. Louis"
+          },
+          "license": "cc-by",
+          "version": "submittedVersion"
+        },
+        {
+          "is_oa": true,
+          "landing_page_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/1182327",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400806",
+            "display_name": "Europe PMC (PubMed Central)",
+            "type": "repository",
+            "host_organization_name": "European Bioinformatics Institute"
+          },
+          "license": "cc-by",
+          "version": "submittedVersion"
+        },
+        {
+          "is_oa": true,
+          "landing_page_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/1182327",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S2764455111",
+            "display_name": "PubMed Central",
+            "type": "repository",
+            "host_organization_name": "National Institutes of Health"
+          },
+          "license": "cc-by",
+          "version": "submittedVersion"
+        },
+        {
+          "is_oa": true,
+          "landing_page_url": "https://doaj.org/article/52d69fba56f94a93972d38c6da6554c6",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306401280",
+            "display_name": "DOAJ (DOAJ: Directory of Open Access Journals)",
+            "type": "repository",
+            "host_organization_name": null
+          },
+          "license": "cc-by-sa",
+          "version": "submittedVersion"
+        },
+        {
+          "is_oa": true,
+          "landing_page_url": "https://doaj.org/article/672569c50cfc422b86ee982f75e98010",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306401280",
+            "display_name": "DOAJ (DOAJ: Directory of Open Access Journals)",
+            "type": "repository",
+            "host_organization_name": null
+          },
+          "license": "cc-by-sa",
+          "version": "submittedVersion"
+        }
+      ],
+      "best_oa_location": {
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1371/journal.pmed.0020124",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S197939330",
+          "display_name": "PLoS Medicine",
+          "type": "journal",
+          "host_organization_name": "Public Library of Science"
+        },
+        "license": "cc-by",
+        "version": "publishedVersion"
+      }
+    }
+  ]
+}

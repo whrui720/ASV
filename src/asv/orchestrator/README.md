@@ -27,7 +27,7 @@ Orchestration logic for claim validation lives here (`src/asv/orchestrator/`).
 | `found_source is not None` (dataset resolver returned a real tabular URL) | `_process_dataset_backed_quant` | `DatasetDownloader → PythonScriptValidator` — download tabular data, generate + execute Python script, parse JSON verdict. `validation_method="python_script"`. |
 | `found_source is None` (citation is an academic paper) | `_process_paper_backed_quant` | `TextDownloader.download_with_resolution → ProcessQualitative.validate_claim` — download paper text (PDF/HTML), retrieve top-K chunks via TF-IDF, LLM verifies claim against chunks. `validation_method="rag_search"`, `claim_type` stays `"quantitative"`. |
 
-`found_source` is populated only by `_process_uncited_quantitative` when `DatasetFinder` locates a genuine dataset (data.gov / Kaggle / Zenodo / etc.). Every other cited-quantitative claim inherits `found_source = None` and lands in the paper-backed branch.
+`found_source` is populated only by `_process_uncited_quantitative` when `DatasetFinder` locates a genuine dataset (Zenodo / Figshare / DataCite / HuggingFace, plus Kaggle when credentialed; data.gov is off by default because its CKAN API is gone). Every other cited-quantitative claim inherits `found_source = None` and lands in the paper-backed branch.
 
 Both branches emit `ValidationBatch` objects into the same `quantitative_cited_results.json` output. Downstream consumers don't need to know which branch produced a batch — the `source_path` extension (`.csv`/`.json`/`.xlsx` vs `.pdf`/`.html`) tells you if needed, but the schema is identical.
 

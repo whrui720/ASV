@@ -1,6 +1,8 @@
 # ASV — Value Proposition, Honest Assessment, and Market Position
 
-**Status:** strategy memo. Opinionated by design.
+**Status:** strategy memo. Opinionated by design. §§1–2 and §4 describe the system as of
+the memo date and are kept as the record; many of the defects they measure have since been
+fixed. Progress against §7's plan is tracked in [`docs/README.md`](README.md).
 **Date:** 2026-09-11
 **Scope:** who actually gains value from ASV, what in it is real, what in it is theatre, what
 exists in the market already, and what would have to change for this to be a thing worth

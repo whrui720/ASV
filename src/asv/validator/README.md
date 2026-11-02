@@ -34,6 +34,17 @@ the primitive would have guaranteed its return.
 Nothing clearing the retrieval threshold returns `not_checkable(retrieval_empty)`,
 not a failed claim: no passage was found, which says nothing about the claim.
 
+### python_script_validator.py
+Dataset-backed quantitative claims only. The strong-tier model writes a pandas
+script, which is saved to `runs/*/generated_scripts/validate_{claim_id}.py` and run
+with a 30-second timeout; the JSON it prints is the evidence for the verdict.
+
+**Not sandboxed.** The script runs as a plain `subprocess.run` that inherits the
+parent's environment (API keys included), network and filesystem. Don't run it on
+untrusted PDFs. `VALUE_PROPOSITION.md` §7 Tier 4 recommends replacing this path
+with deterministic checks; `NOTEBOOK_SANDBOX_PLAN.md` proposes containing it. Neither
+has been built.
+
 ## Orchestration Modules
 
 Moved to `orchestrator/`:
@@ -60,18 +71,21 @@ Moved to `orchestrator/`:
 ```
 
 ### Output: ValidationResult
+Trimmed; see `src/asv/core/models.py` for the full model and `docs/QUICKSTART.md`
+for complete examples.
 ```python
 {
     "claim_id": "paper123_claim_1",
-    "claim_type": "quantitative",
-    "originally_uncited": false,
-    "validated": true,
-    "validation_method": "python_script",
-    "confidence": 0.92,
-    "passed": true,
-    "explanation": "Dataset confirms accuracy improvement of 15.3%",
-    "sources_used": ["/path/to/dataset.csv"],
-    "errors": null
+    "claim_type": "qualitative",
+    "validation_method": "rag_search",
+    "verdict": "partially_substantiated",   # see core/verdicts.py
+    "not_checkable_reason": None,           # always set when verdict == not_checkable
+    "confidence": 0.74,                     # always None when verdict == not_checkable
+    "explanation": "The source reports this in a murine model; the claim states it of patients.",
+    "evidence": [{"quote": "...", "verified_verbatim": True, "source_url": "..."}],
+    "source_url": "https://europepmc.org/article/MED/1234567",
+    "flags": [],                            # e.g. cited_source_retracted
+    "passed": False                         # deprecated, computed: verdict == substantiated
 }
 ```
 
@@ -80,8 +94,10 @@ Moved to `orchestrator/`:
 {
     "citation_id": "paper123_ref_5",
     "citation_text": "[5] Smith et al., 2023",
-    "download_successful": true,
-    "source_path": "runs/paper123__20260101_120000/datasets/citation_paper123_ref_5_dataset.csv",
+    "download_successful": true,     # bytes arrived
+    "judgeable": true,               # ...and the content gate rated them full text
+    "content_quality": "full_text",  # full_text | abstract_only | paywall_interstitial | rejected
+    "source_path": "runs/paper123__20260101_120000/text_sources/citation_paper123_ref_5_text.xml",
     "claim_results": [
         {...},  # List of ValidationResult
         {...}
@@ -105,7 +121,6 @@ Key settings in `config.py`:
 
 ```python
 # Validation thresholds
-TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.8
 LLM_VERIFIER_CONFIDENCE_THRESHOLD = 0.8
 DATASET_REUSE_CONFIDENCE = 0.75
 
@@ -120,7 +135,8 @@ RAG_MIN_CHUNK_LENGTH = 50
 RAG_MAX_CHUNK_LENGTH = 500
 RAG_SIMILARITY_THRESHOLD = 0.15  # lowered from 0.3 — see note below
 
-# Script execution
+# Script execution. Dead config: python_script_validator.py hardcodes timeout=30
+# and imports none of these (NOTEBOOK_SANDBOX_PLAN.md §1).
 SCRIPT_TIMEOUT = 60
 SCRIPT_TIMEOUT_SECONDS = 30
 SCRIPT_MAX_OUTPUT_LENGTH = 10000
@@ -160,8 +176,9 @@ results = orchestrator.process_claims(claims, citations)
 
 Required packages:
 ```
-google-generativeai
+google-genai
 scikit-learn
+rapidfuzz
 numpy
 pandas
 requests
@@ -169,21 +186,18 @@ requests
 
 ## Error Handling
 
-### Batch Processing
-- If dataset/text download fails → entire batch fails
-- All claims in batch get validation_method but passed=False
-- Error message stored in ValidationResult.errors
+Every failure is an abstention with a reason, never a failed claim
+(`docs/TIER0_PLAN.md`; reason codes in `src/asv/core/verdicts.py`):
 
-### Script Execution
-- 30-second timeout per script
-- Subprocess captures stdout/stderr
-- JSON parsing errors → validation failed
-
-### RAG Processing
-- Empty source text → returns `{"passed": False, "explanation": "Source text is empty or could not be chunked"}`. (In practice this path rarely fires because `TextDownloader`'s 200-char gate rejects empty extractions upstream — the batch is marked `download_successful=False` before RAG is even attempted.)
-- No chunks above `RAG_SIMILARITY_THRESHOLD` → returns `{"passed": False, "explanation": "No relevant chunks found in source"}`. Lowering the threshold in `config.py` reduces the rate of this false-negative failure.
-- TF-IDF vectorization exception → soft fallback to the first K chunks, unranked. This is intentional so that a scikit-learn error doesn't cascade into a batch failure.
-- LLM errors → validation failed with error message on `ValidationResult.errors`
+| Situation | Result |
+|---|---|
+| No candidate URL resolved | `not_checkable(source_not_resolved)` |
+| Candidates found, every fetch failed | `not_checkable(source_download_failed)` |
+| Fetched, but the content gate says abstract / login wall | `not_checkable(abstract_only)` / `not_checkable(paywall_interstitial)` |
+| No chunk clears `RAG_SIMILARITY_THRESHOLD` | `not_checkable(retrieval_empty)` |
+| Model's quotes not found in the retrieved text | `not_checkable(evidence_unverifiable)`; unverified quotes kept in `validation_metadata` |
+| TF-IDF vectorisation raises | soft fallback to the first K chunks, unranked |
+| Script timeout (30 s) / unparseable script output | `not_checkable(validation_error)`, details on `errors` |
 
 ## Integration with Other Modules
 
@@ -208,7 +222,7 @@ results = orchestrator.process_claims(claims, citations)
 ### Using sourcefinder:
 The orchestrator automatically uses sourcefinder utilities:
 - `DatasetFinder`: Search for datasets, check reuse
-- `TextFinder`: Search for text sources
+- `AcademicPaperFinder`: Resolve a citation to ranked full-text candidates
 - `DatasetDownloader`: Download CSV/JSON/Excel
 - `TextDownloader`: Download PDF/HTML, extract text
 

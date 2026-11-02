@@ -17,6 +17,19 @@ is recommended.
 
 - `run_webapp.py`: Builds the frontend (`apps/web`) if needed, then starts the FastAPI backend (`apps/api`, served at `apps.api.main:app`) which also serves the built bundle. `--no-build`, `--port`, `--reload` flags available.
 
+## Auditing and benchmarking
+
+Run by hand; these are the only scripts besides the pipeline that touch the network.
+`docs/TIER0_PLAN.md` §7 explains which parts are code and which are irreducibly manual.
+
+- `probe_existence_apis.py`: checks that the free bibliographic indexes (Crossref, OpenAlex, Europe PMC, PubMed, DataCite) still answer with the fields `index_clients.py` reads.
+- `calibrate_content_quality.py`: re-fetches past sources and writes a CSV to hand-label; `--score` scores the content-quality classifier against those labels.
+- `build_gold_seed.py`: seeds gold-set claim/source pairs from existing runs into `benchmarks/gold/`.
+- `seed_miscitations.py`: proposes hard negatives (corrupted claim/source pairs); a human accepts each one.
+- `eval_gold.py`: computes precision, recall and false-accusation rate over the labelled gold set (`--repeats N` for determinism).
+
+Pairs are labelled in the web UI at `/benchmark`.
+
 ## Test runners
 
 - `run_tests.py`: Python test runner wrapper around pytest.
@@ -26,6 +39,8 @@ is recommended.
 
 - `test_dataset_finder_downloader.py`: Smoke-test the dataset finder + downloader path without invoking the full orchestrator.
 - `test_python_script_validator.py`: Smoke-test the Python script generation/execution validator.
+
+These two are manual smoke scripts, not pytest modules; `pytest.ini` only collects from the package test directories.
 
 ## Usage
 

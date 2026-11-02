@@ -1,0 +1,36 @@
+{
+  "total": 4160,
+  "offset": 0,
+  "next": 2,
+  "data": [
+    {
+      "paperId": "44fc4497fbd8de9f92c8cfd480b6f8a8c0b4ff39",
+      "externalIds": {
+        "MAG": "2243629635",
+        "PubMedCentral": "1182327",
+        "DOI": "10.1080/09332480.2005.10722754",
+        "CorpusId": 6213730,
+        "PubMed": "16060722"
+      },
+      "title": "Why Most Published Research Findings Are False",
+      "openAccessPdf": {
+        "url": "https://doi.org/10.1371/journal.pmed.0020124",
+        "status": "GOLD",
+        "license": "CCBY"
+      }
+    },
+    {
+      "paperId": "25459caf19614fde5e1b82deac7cb9496d7c1c9b",
+      "externalIds": {
+        "DOI": "10.1080/09332480.2019.1579573",
+        "CorpusId": 262982640
+      },
+      "title": "Why Most Published Research Findings Are False",
+      "openAccessPdf": {
+        "url": "https://journals.plos.org/plosmedicine/article/file?id=10.1371/journal.pmed.0020124&type=printable",
+        "status": "GREEN",
+        "license": "CCBY"
+      }
+    }
+  ]
+}

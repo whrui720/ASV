@@ -2,7 +2,8 @@
 
 **Status:** **implemented** 2026-09-15 (plan written 2026-09-14, from `main` at `bbb7be1`).
 The plan below is preserved as written; what actually landed, and where it deviates, is
-recorded in [§14](#14-implementation-record) at the end.
+recorded in [§14](#14-implementation-record) at the end. **Still open:** calibrating the
+content gate and labelling the gold set (0.4). §14.5 has the status as of 2026-11-01.
 **Scope:** how to implement [`VALUE_PROPOSITION.md`](VALUE_PROPOSITION.md) §7 Tier 0 items
 **0.1–0.5**, plus **0.6 — reference-existence and retraction checking** (the §5/L1 capability
 ASV did not have).
@@ -1268,6 +1269,40 @@ hiding it.
 §0 of this plan predicted this and it holds: **Tier 0 did not change how many claims
 ASV can check. It changed how many it claims to have checked.** Tier 1 —
 source acquisition — is the only thing that moves the first number.
+
+### 14.5 Status update, 2026-11-01
+
+Against the four "not yet validated" items in §14.3:
+
+| Item | Status now |
+|---|---|
+| P0 spike / index field paths | **Largely addressed.** Every index and full-text client now has offline tests replaying real captured responses (`src/asv/sourcefinder/tests/test_api_*.py`, `fixtures/api/`) plus an opt-in live contract suite. Writing them found and fixed field-path bugs in `index_clients.py` (PubMed author surnames, the Europe PMC journal title). This work is uncommitted as of this date. |
+| Content-quality thresholds | **Still uncalibrated.** `calibrate_content_quality.py` has not been run. |
+| Gold set | **Still empty.** No labelled pairs, so there is still no measured precision or false-accusation rate. |
+| Full pipeline run on a real PDF | **Done once:** `runs/hsv_cancer__20260923_204743`, with Tier 0 and the SOURCE_ACQUISITION Phase 0–4 changes in place. |
+
+That run's outcome, 314 claims:
+
+| Verdict / reason | Claims |
+|---|---:|
+| `substantiated` | **1** |
+| `not_checkable(no_source_available)` | 214 |
+| `not_checkable(abstract_only)` | 31 |
+| `not_checkable(source_download_failed)` | 29 |
+| `not_checkable(original_contribution)` | 23 |
+| `not_checkable(source_not_resolved)` | 14 |
+| `not_checkable(paywall_interstitial)` | 2 |
+
+The bibliography audit verified 240 of 253 references (11 ambiguous, 2 unindexed by
+design). Two conclusions follow:
+
+- **The largest bucket is an extraction problem, not an acquisition problem.** 214 of 314
+  claims (68%) reached the orchestrator with no citation, in a review paper where nearly
+  every sentence carries one. VALUE_PROPOSITION Tier 1.7 (citation attribution) is not
+  started: `llm_client.py` still shows the extractor only the first 10 references,
+  truncated to 100 characters.
+- **Acquisition gets bytes but not full text.** 28 of 51 text batches fetched something;
+  only 1 was graded `full_text`. See SOURCE_ACQUISITION.md §11.
 
 ## Appendix A — File-by-file change inventory
 

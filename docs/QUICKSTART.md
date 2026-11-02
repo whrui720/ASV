@@ -2,18 +2,21 @@
 
 ## Installation
 
-1. **Install dependencies:**
+1. **Install the package and dependencies:**
 ```bash
-pip install -r requirements.txt
+pip install -e ".[dev]"      # or: pip install -e .   (runtime only)
+playwright install chromium  # browser fallback for paywalled sources
 ```
 
-2. **Set up environment variables:**
-Create a `.env` file in the project root:
+2. **Set up credentials.** Copy `.env.example` to `.env` and fill it in, or start the web
+UI (below) and use the form at `/config`, which writes the same file and explains what
+each field unlocks. The minimum worth running with:
 ```bash
-GEMINI_API_KEY=your_gemini_api_key_here
-PUBMED_API_KEY=your_pubmed_key_here            # Optional (raises PubMed rate limit)
-
+GEMINI_API_KEY=...       # required
+UNPAYWALL_EMAIL=...      # any real address; without it the Unpaywall step is skipped
 ```
+Every other key is optional and raises the share of sources ASV can read in full. See
+`.env.example` for the list, or run `/credentials` in Claude Code for a walkthrough.
 
 ## Basic Usage
 
@@ -171,31 +174,37 @@ verdicts cannot be written without a verbatim-verified quote and a resolvable UR
 Similar structure to qualitative_uncited_results.json
 
 ### 3. quantitative_cited_results.json
+A list of `ValidationBatch`, one per citation. `download_successful` says bytes arrived;
+`judgeable` says the content gate rated them full text. Only judgeable batches get
+verdicts.
 ```json
 [
   {
-    "citation_id": "paper123_ref_5",
-    "citation_text": "[5] Smith et al., 2023",
+    "citation_id": "23",
+    "citation_text": "[23] Smith et al., 2023",
     "download_successful": true,
-    "source_path": "runs/paper123__20260101_120000/datasets/citation_paper123_ref_5_dataset.csv",
+    "judgeable": false,
+    "content_quality": "abstract_only",
     "claim_results": [
       {
         "claim_id": "claim_3_1",
         "claim_type": "quantitative",
-        "originally_uncited": false,
-        "validated": true,
-        "validation_method": "python_script",
-        "confidence": 0.95,
-        "passed": true,
-        "explanation": "Dataset confirms accuracy improvement of 15.3%",
-        "sources_used": ["runs/paper123__20260101_120000/datasets/citation_paper123_ref_5_dataset.csv"],
-        "errors": null
+        "validation_method": "rag_search",
+        "verdict": "not_checkable",
+        "not_checkable_reason": "abstract_only",
+        "confidence": null,
+        "explanation": "Only the abstract of the cited source could be obtained ...",
+        "evidence": [],
+        "source_url": "https://doi.org/10.1234/abc"
       }
     ],
-    "batch_notes": "Successfully validated 3 claims"
+    "batch_notes": "..."
   }
 ]
 ```
+Dataset-backed batches have the same shape with `validation_method: "python_script"`.
+`passed` still appears on every result but is deprecated: it is computed as
+`verdict == "substantiated"`. Read `verdict`.
 
 ### 4. qualitative_cited_results.json
 Similar batch structure to quantitative_cited_results.json
@@ -208,19 +217,17 @@ results = orchestrator.process_claims(claims, citations)
 
 # Qualitative uncited (List of ValidationResult)
 for result in results["qualitative_uncited"]:
-    print(f"Claim {result.claim_id}: {'PASSED' if result.passed else 'FAILED'}")
-    print(f"  Confidence: {result.confidence}")
-    print(f"  Method: {result.validation_method}")
+    print(result.claim_id, result.verdict.value, result.not_checkable_reason)
 
 # Quantitative cited (List of ValidationBatch)
 for batch in results["quantitative_cited"]:
     print(f"\nCitation: {batch.citation_id}")
-    print(f"Download: {'SUCCESS' if batch.download_successful else 'FAILED'}")
+    print(f"Downloaded: {batch.download_successful}  judgeable: {batch.judgeable}")
 
-    for claim_result in batch.claim_results:
-        status = 'PASSED' if claim_result.passed else 'FAILED'
-        print(f"  Claim {claim_result.claim_id}: {status}")
-        print(f"    Explanation: {claim_result.explanation}")
+    for r in batch.claim_results:
+        print(f"  {r.claim_id}: {r.verdict.value} {r.not_checkable_reason or ''}")
+        for span in r.evidence:
+            print(f"    quote: {span.quote}")
 ```
 
 ## Configuration
@@ -229,7 +236,6 @@ for batch in results["quantitative_cited"]:
 
 Edit `src/asv/validator/config.py`:
 ```python
-TRUTH_TABLE_CONFIDENCE_THRESHOLD = 0.8       # Lower = more lenient
 LLM_VERIFIER_CONFIDENCE_THRESHOLD = 0.8
 DATASET_REUSE_CONFIDENCE = 0.75
 
@@ -238,7 +244,7 @@ RAG_SIMILARITY_THRESHOLD = 0.15              # Lower = more chunks pass to the L
 RAG_MIN_CHUNK_LENGTH = 50
 RAG_MAX_CHUNK_LENGTH = 500
 
-SCRIPT_TIMEOUT_SECONDS = 30                  # Python-script validator timeout
+QUOTE_VERIFICATION_THRESHOLD = 92            # rapidfuzz partial_ratio a quote must reach
 LLM_TEMPERATURE = 0.2
 LLM_MAX_RETRIES = 3
 ```
@@ -262,11 +268,11 @@ DOWNLOAD_TIMEOUT = 60           # Seconds
 MAX_FILE_SIZE_MB = 500
 ```
 
-Edit `src/asv/sourcefinder/text_downloader.py`:
-```python
-_MIN_USABLE_TEXT_CHARS = 200  # Min non-whitespace extracted chars to accept a download
-```
-If a downloaded PDF/HTML extracts less than this, the file is deleted and the next candidate URL is tried. Raise this to be stricter (reject more responses); lower it if paywalled short abstracts should count as a success.
+The content-quality gate's thresholds (`CQ_*`, starting with `CQ_MIN_USABLE_CHARS = 200`)
+are in the same file. Below the floor a fetch is rejected and the next candidate is tried;
+above it, the classifier decides whether the text is full text, an abstract, or an access
+wall, and only full text is judged. The thresholds are uncalibrated; use
+`scripts/calibrate_content_quality.py` rather than tuning them by hand.
 
 ## Troubleshooting
 
@@ -290,16 +296,21 @@ pip install scikit-learn
 ### "URL is not tabular data (detected: application/pdf)"
 `DatasetDownloader` explicitly rejects non-tabular payloads. This is normal — the orchestrator's cascade will move to the next candidate URL. If every candidate for a batch is a PDF, the batch is genuinely paper-backed (not dataset-backed); if the batch is quantitative cited, it will be routed through `_process_paper_backed_quant` (RAG) instead of the strict script-validator path.
 
-### "Extraction produced N usable chars (<200); format=..."
+### "Unusable content: only N usable characters"
 `TextDownloader` treats short extractions as failures. Common causes:
 - The URL served an HTML login-wall (Wiley/ASM/OUP paywalls do this even to `.pdf` URLs)
 - PDF was scanned images with no embedded text — none of `pymupdf`, `pdfminer.six`, or `pypdf` could extract anything
 - HTML page had no `<article>`/`<main>` container after stripping nav chrome
 
-If the orchestrator iterates through every candidate and every one fails this way, the batch's `download_successful=False` — the source is genuinely inaccessible in open form.
+If the orchestrator iterates through every candidate and every one fails this way, the batch's `download_successful=False` and its claims are `not_checkable(source_download_failed)`.
+
+### Most cited claims are `not_checkable(abstract_only)`
+The source was fetched, but only as an abstract or landing page, and ASV doesn't judge a
+claim against an abstract. More credentials (`UNPAYWALL_EMAIL`, `CORE_API_KEY`, publisher
+TDM keys, `EZPROXY_HOST`) or the browser login flow give it more routes to full text.
 
 ### Paywalled sources — using the Playwright login flow
-When any `KNOWN_PAYWALL_DOMAINS` (see `src/asv/sourcefinder/config.py`) appear in the citations, the orchestrator opens a visible Chromium window with a tab per domain at startup and prints:
+After the up-front resolution pass, if any resolved candidate URL is on a `KNOWN_PAYWALL_DOMAINS` host (see `src/asv/sourcefinder/config.py`), the orchestrator opens a visible Chromium window with a tab per domain at startup and prints:
 
 ```
 [ASV] Please log in to the following sites in the browser window:
@@ -311,18 +322,16 @@ Log in normally in each tab (SSO, institutional proxy, whatever your library use
 1. Snapshots every cookie in the browser context via `BrowserSearcher.export_cookies()`.
 2. Injects them into `TextDownloader.session`, `AcademicPaperFinder._session`, and `DatasetDownloader.session` — so subsequent `requests.get()` calls carry your session.
 3. Mirrors them into `AcademicPaperFinder._inst_cookies` by domain so `fetch_with_cookies()` finds them.
-4. If a fetch still fails, `download_with_resolution` step 4 retries each attempted URL through `BrowserSearcher.download_url()`, which uses Playwright's `APIRequestContext` (shares storage state with the browser — closest thing to a real navigation).
+4. If a fetch still fails, `download_with_resolution` retries each attempted URL through `BrowserSearcher.download_url()`, which uses Playwright's `APIRequestContext` (shares storage state with the browser — closest thing to a real navigation).
 
-Requires `BROWSER_HEADLESS = False` in `src/asv/sourcefinder/config.py` (the default). For CI/headless usage, populate `INSTITUTIONAL_COOKIES` in `.env` instead — same effect without the manual login prompt.
+Requires `BROWSER_HEADLESS = False` in `src/asv/sourcefinder/config.py` (the default). Logins are not yet persisted between runs, so expect the prompt on every run. When the run is launched from the web UI, the prompt appears there (an `awaiting_login` event) instead of in the terminal. `INSTITUTIONAL_COOKIES` remains as an escape hatch for headless use, but it needs hand-copied cookies that expire.
 
-### "No relevant chunks found in source"
-The RAG retriever found nothing above `RAG_SIMILARITY_THRESHOLD` in the downloaded text. Try lowering the threshold in `src/asv/validator/config.py`. Common when the paper text is very long (many low-similarity chunks) or when the claim uses different terminology than the source.
+### `not_checkable(retrieval_empty)`
+The TF-IDF retriever found nothing above `RAG_SIMILARITY_THRESHOLD` in the downloaded text. This is reported as a retrieval failure, not as evidence against the claim. TF-IDF misses paraphrase; lowering the threshold in `src/asv/validator/config.py` lets more chunks through at the cost of noise.
 
 ### "Script execution timeout"
-Increase timeout in `src/asv/validator/config.py`:
-```python
-SCRIPT_TIMEOUT_SECONDS = 60  # Increase from 30 to 60
-```
+The 30 s timeout is hardcoded in `src/asv/validator/python_script_validator.py`; the
+`SCRIPT_TIMEOUT*` values in `validator/config.py` are not read.
 
 ### "Out of memory"
 Process claims in smaller batches:
@@ -350,14 +359,21 @@ extractor.save_results(pdf_path="pdfs/paper.pdf", run_paths=run_paths)
 orchestrator = ClaimOrchestrator(run_paths=run_paths)
 results = orchestrator.process_claims(claims, citations)
 
-# Count passed/failed
-passed = sum(1 for r in results["qualitative_uncited"] if r.passed)
-total = len(results["qualitative_uncited"])
-print(f"Qualitative uncited: {passed}/{total} passed")
+# Tally verdicts across the cited groups
+from collections import Counter
+tally = Counter(
+    r.verdict.value
+    for group in ("qualitative_cited", "quantitative_cited")
+    for batch in results[group]
+    for r in batch.claim_results
+)
+print(tally)
 ```
 
 ### Example 2: Filter Only Quantitative Claims
 ```python
+from asv.extraction.claim_extractor import HybridClaimExtractor
+from asv.orchestrator import ClaimOrchestrator
 from asv.core.run_paths import RunPaths
 
 run_paths = RunPaths.for_pdf("pdfs/paper.pdf")
@@ -390,31 +406,18 @@ for claim, source_text, source_url in pairs:
 There is no source-free path. `LLMVerifier` has no `verify_claim`: a claim with
 no source is reported as `not_checkable`, never scored against model priors.
 
-## Cost Estimates
+## Cost
 
-**Gemini pricing:**
-- Input: $0.150 per million tokens
-- Output: $0.600 per million tokens
-
-**Typical costs:**
-- 10-page paper extraction: ~$0.002-0.003
-- Validation (100 claims): ~$0.01-0.02
-- **Total per paper: ~$0.015-0.025**
-
-**100 papers: ~$1.50-2.50**
-
-## Next Steps
-
-1. Test with sample PDFs
-2. Integrate real APIs (Kaggle, Scholar, arXiv)
-3. Add error handling and retry logic
-4. Build web interface for results
-5. Add progress tracking for large batches
+Not measured yet. `LLMClient.get_cost_summary()` applies one flat price to every model
+tier (including Gemini Pro), and the orchestration stage isn't costed at all, so any
+figure it prints is unreliable (`docs/VALUE_PROPOSITION.md` §7, Tier 3.4).
 
 ## Support
 
 See module-specific documentation:
-- [Claim Extraction](src/asv/extraction/README.md)
-- [Orchestrator](src/asv/orchestrator/README.md)
-- [Validator](src/asv/validator/README.md)
-- [Sourcefinder](src/asv/sourcefinder/README.md)
+- [Claim Extraction](../src/asv/extraction/README.md)
+- [Orchestrator](../src/asv/orchestrator/README.md)
+- [Validator](../src/asv/validator/README.md)
+- [Sourcefinder](../src/asv/sourcefinder/README.md)
+
+Plans, analyses and their status: [docs/README.md](README.md).

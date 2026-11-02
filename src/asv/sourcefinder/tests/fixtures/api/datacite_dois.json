@@ -1,0 +1,117 @@
+{
+  "data": [
+    {
+      "id": "10.5281/zenodo.20426843",
+      "type": "dois",
+      "attributes": {
+        "doi": "10.5281/zenodo.20426843",
+        "titles": [
+          {
+            "title": "Climate Variability and West Antarctic Ice Sheet Collapse"
+          }
+        ],
+        "publisher": "Zenodo",
+        "publicationYear": 2026,
+        "types": {
+          "schemaOrg": "Dataset",
+          "resourceTypeGeneral": "Dataset",
+          "citeproc": "dataset",
+          "bibtex": "misc",
+          "ris": "DATA",
+          "resourceType": ""
+        },
+        "url": "https://zenodo.org/doi/10.5281/zenodo.20426843",
+        "creators": [
+          {
+            "name": "Blasco Navarro, Javier",
+            "nameType": "Personal",
+            "givenName": "Javier",
+            "familyName": "Blasco Navarro"
+          },
+          {
+            "name": "Swierczek-Jereczek, Jan",
+            "nameType": "Personal",
+            "givenName": "Jan",
+            "familyName": "Swierczek-Jereczek"
+          },
+          {
+            "name": "Montoya, Marisa",
+            "nameType": "Personal",
+            "givenName": "Marisa",
+            "familyName": "Montoya"
+          },
+          {
+            "name": "Alvarez Solas, Jorge",
+            "nameType": "Personal",
+            "givenName": "Jorge",
+            "familyName": "Alvarez Solas"
+          },
+          {
+            "name": "Robinson, Alexander",
+            "nameType": "Personal",
+            "givenName": "Alexander",
+            "familyName": "Robinson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "10.5281/zenodo.23168193",
+      "type": "dois",
+      "attributes": {
+        "doi": "10.5281/zenodo.23168193",
+        "titles": [
+          {
+            "title": "Climate Variability and West Antarctic Ice Sheet Collapse"
+          }
+        ],
+        "publisher": "Zenodo",
+        "publicationYear": 2026,
+        "types": {
+          "schemaOrg": "Dataset",
+          "resourceTypeGeneral": "Dataset",
+          "citeproc": "dataset",
+          "bibtex": "misc",
+          "ris": "DATA",
+          "resourceType": ""
+        },
+        "url": "https://zenodo.org/doi/10.5281/zenodo.23168193",
+        "creators": [
+          {
+            "name": "Blasco Navarro, Javier",
+            "nameType": "Personal",
+            "givenName": "Javier",
+            "familyName": "Blasco Navarro"
+          },
+          {
+            "name": "Swierczek-Jereczek, Jan",
+            "nameType": "Personal",
+            "givenName": "Jan",
+            "familyName": "Swierczek-Jereczek"
+          },
+          {
+            "name": "Montoya, Marisa",
+            "nameType": "Personal",
+            "givenName": "Marisa",
+            "familyName": "Montoya"
+          },
+          {
+            "name": "Alvarez Solas, Jorge",
+            "nameType": "Personal",
+            "givenName": "Jorge",
+            "familyName": "Alvarez Solas"
+          },
+          {
+            "name": "Robinson, Alexander",
+            "nameType": "Personal",
+            "givenName": "Alexander",
+            "familyName": "Robinson"
+          }
+        ]
+      }
+    }
+  ],
+  "meta": {
+    "total": 530
+  }
+}

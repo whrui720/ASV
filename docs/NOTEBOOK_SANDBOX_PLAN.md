@@ -1,6 +1,13 @@
 # Notebooks + Sandboxing — Implementation Plan
 
-**Status:** proposed (written 2026-09-19, from `main` at `bbb7be1` + uncommitted Tier 0 work).
+**Status:** proposed, **not started** (written 2026-09-19, from `main` at `bbb7be1` + uncommitted Tier 0 work).
+As of 2026-11-01 `python_script_validator.py` still runs generated code with the full
+parent environment, network access and the run folder as its working directory. **N1
+(§11) is worth doing regardless of anything else:** it closes the credential-exfiltration
+hole and touches nothing outside the validator. N2–N6 (notebooks, in-browser re-run) build
+up a path that VALUE_PROPOSITION.md §7 Tier 4 recommends replacing, and that path produced
+no verdicts in the last full run (all 4 dataset downloads returned 403). Hold N2–N6 until
+the Tier 4 decision is made.
 **Scope:** turn the LLM-generated data-analysis scripts into (a) sandboxed executions and
 (b) Jupyter notebooks that are stored per run and rendered — and re-runnable — in the web UI.
 

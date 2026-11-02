@@ -1,9 +1,14 @@
 # ASV Frontend — Plan & Structure
 
-Status: **partially implemented** — the API (`api/`) and web frontend (`web/`) both exist and
-follow this spec; treat this document as the design reference (code comments cite it by section
-number), not as a to-do list. Sections still describe the intended end state; not every phase is
-complete.
+Status: **implemented, used as the design reference** (updated 2026-11-01). The API
+(`apps/api/`) and frontend (`apps/web/`) follow this spec, and code comments cite it by
+section number, so the numbering is stable. Screens S1–S8 all exist. Built since, and not
+specified here: References (Tier 0.6 audit), Benchmark (gold-set labelling, `/benchmark`)
+and Config (credentials, `/config`). Not built: B7 per-run cost reporting, which is blocked
+on the flat-rate cost accounting (VALUE_PROPOSITION §7, Tier 3.4).
+
+Historical note: §1's table and the "passed / failed" vocabulary predate the verdict
+ontology (TIER0_PLAN.md). The UI now renders `verdict` + `not_checkable_reason`.
 Scope: a web UI over the existing ASV pipeline (`scripts/run_pipeline.py` → `runs/{pdf_stem}__{timestamp}/`).
 
 ---

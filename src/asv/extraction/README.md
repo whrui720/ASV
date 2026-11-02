@@ -120,10 +120,10 @@ Each claim has:
 
 For efficient downstream validation, the list of claim objects is partioned into 4 sections based on type, in the following order:
 
-1. **Qualitative WITHOUT citations** → Fast verification (truth table/LLM)
+1. **Qualitative WITHOUT citations** → no source to check against; reported as `not_checkable(no_source_available)` with no model call
 2. **Quantitative WITHOUT citations** → Need source finding
 3. **Qualitative WITH citations** → Batch text download + RAG
-4. **Quantitative WITH citations** → Batch dataset download + scripts
+4. **Quantitative WITH citations** → Batch download; paper-backed claims go through RAG, dataset-backed ones through a generated script
 
 Additionally, within the section for each type, claims with the same `citation_id` are grouped together for batch processing, 
 but only for claims with found citation(s) (e.g. the last two sections).

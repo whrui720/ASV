@@ -1,0 +1,65 @@
+{
+  "hits": {
+    "hits": [
+      {
+        "id": 6461153,
+        "doi": "10.5281/zenodo.6461153",
+        "title": "Global Surface Temperature Changes Datasets Converted to 1850-1900 Baseline",
+        "metadata": {
+          "title": "Global Surface Temperature Changes Datasets Converted to 1850-1900 Baseline",
+          "description": "<p>Global warming datasets converted to the uniform baseline. NASA, NOAA and Berkeley Earth datasets of global surface temperature changes in the period 1850-2021 for land+ocean, 1750-2021 for land on",
+          "resource_type": {
+            "title": "Dataset",
+            "type": "dataset"
+          }
+        },
+        "files": [
+          {
+            "key": "Global Surface Temperature Changes Datasets Converted to 1850-1900 Baseline.xls",
+            "size": 119296,
+            "links": {
+              "self": "https://zenodo.org/api/records/6461153/files/Global%20Surface%20Temperature%20Changes%20Datasets%20Converted%20to%201850-1900%20Baseline.xls/content"
+            }
+          }
+        ]
+      },
+      {
+        "id": 21486161,
+        "doi": "10.5281/zenodo.21486161",
+        "title": "tempeR",
+        "metadata": {
+          "title": "tempeR",
+          "description": "<blockquote>\n<p>Various climate data sets including temperature, radiation, wind, and humidity from gauge-based observations, reanalysis products, and model outputs. All data sets were gathered from t",
+          "resource_type": {
+            "title": "Dataset",
+            "type": "dataset"
+          }
+        },
+        "files": [
+          {
+            "key": "mswx-past_u10_ms-1_land_197901_202412_025_monthly.nc",
+            "size": 573487814,
+            "links": {
+              "self": "https://zenodo.org/api/records/21486161/files/mswx-past_u10_ms-1_land_197901_202412_025_monthly.nc/content"
+            }
+          },
+          {
+            "key": "cru_t2m_degC_land_190101_202212_025_monthly.nc",
+            "size": 423768456,
+            "links": {
+              "self": "https://zenodo.org/api/records/21486161/files/cru_t2m_degC_land_190101_202212_025_monthly.nc/content"
+            }
+          },
+          {
+            "key": "fluxcom_nr_mjm-2d-1_land_200101_201312_025_monthly.nc",
+            "size": 330174182,
+            "links": {
+              "self": "https://zenodo.org/api/records/21486161/files/fluxcom_nr_mjm-2d-1_land_200101_201312_025_monthly.nc/content"
+            }
+          }
+        ]
+      }
+    ],
+    "total": 69012
+  }
+}

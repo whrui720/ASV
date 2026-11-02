@@ -1,0 +1,60 @@
+{
+  "header": {
+    "type": "esummary",
+    "version": "0.3"
+  },
+  "result": {
+    "uids": [
+      "16060722"
+    ],
+    "16060722": {
+      "uid": "16060722",
+      "pubdate": "2005 Aug",
+      "epubdate": "2005 Aug 30",
+      "source": "PLoS Med",
+      "authors": [
+        {
+          "name": "Ioannidis JP",
+          "authtype": "Author",
+          "clusterid": ""
+        }
+      ],
+      "lastauthor": "Ioannidis JP",
+      "title": "Why most published research findings are false.",
+      "volume": "2",
+      "issue": "8",
+      "pages": "e124",
+      "fulljournalname": "PLoS medicine",
+      "pubtype": [
+        "Journal Article"
+      ],
+      "articleids": [
+        {
+          "idtype": "pubmed",
+          "idtypen": 1,
+          "value": "16060722"
+        },
+        {
+          "idtype": "pmc",
+          "idtypen": 8,
+          "value": "PMC1182327"
+        },
+        {
+          "idtype": "pmcid",
+          "idtypen": 5,
+          "value": "pmc-id: PMC1182327;"
+        },
+        {
+          "idtype": "doi",
+          "idtypen": 3,
+          "value": "10.1371/journal.pmed.0020124"
+        },
+        {
+          "idtype": "pii",
+          "idtypen": 4,
+          "value": "04-PLME-E-0321R2"
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # asv.sourcefinder — Source Finding & Downloading (Stage 3 utilities)
 
-Utility tools for finding and downloading sources (datasets and text documents), under `src/asv/sourcefinder/`. These tools are used by the `asv.orchestrator` module to locate evidence for uncited claims. NOTE: This folder does not contain any tools for validation (e.g. truth table lookup, basic LLM checks, etc.); validation tools are in `asv.validator` and orchestration logic is in `asv.orchestrator`.
+Utility tools for finding and downloading sources (datasets and text documents), under `src/asv/sourcefinder/`. The `asv.orchestrator` module uses them to resolve citations to full text, audit the bibliography, and find datasets for uncited quantitative claims. Nothing here judges a claim: verification is in `asv.validator`, orchestration in `asv.orchestrator`. Measured behaviour and the reasoning behind each design choice are in `docs/SOURCE_ACQUISITION.md`.
 
 ## Purpose
 
@@ -17,7 +17,9 @@ Used when a quantitative claim is detected as verifiable by a dataset, but does 
 Thus, this class searches for appropriate datasets, and manages dataset reuse (previously found datasets will be prioritized/reused so that several quantitative claims without citations may be batched together on a single found dataset).
 
 **Key Features:**
-- Search dataset repositories (Kaggle, Google Dataset Search, etc.)
+- Search dataset registries through their JSON APIs: Zenodo, Figshare, DataCite, HuggingFace, plus Kaggle when `KAGGLE_USERNAME`/`KAGGLE_KEY` are set. data.gov is off by default (`ASV_ENABLE_DATA_GOV=1`): its CKAN API has answered 404 since at least 2026-09-23
+- The query is built from the claim's entities and measures by the LLM, not from the raw sentence
+- `_rank_candidates` is a real LLM re-rank and may reject every candidate
 - Check if existing datasets can be reused for similar claims
 - LLM decides dataset applicability with confidence threshold
 - Track `reused_count` for dataset reuse
@@ -81,11 +83,11 @@ found_source = finder.find_text_source(
 # }
 ```
 
-**Note:** Currently contains placeholder implementation. Real implementation should use:
-- Google Scholar API
-- arXiv API
-- Semantic Scholar API
-- PubMed API
+**Note:** not called by the pipeline. The orchestrator constructs a `TextFinder` and hands
+it the browser, but nothing calls `find_text_source`: uncited claims are never given a
+source (`not_checkable(no_source_available)`), and cited ones resolve through
+`AcademicPaperFinder`. Its only implementation is a Google Scholar browser search. Treat it
+as dead code until a feature needs it.
 
 ### dataset_downloader.py
 Download datasets in various formats, with strict content sniffing so non-tabular payloads never masquerade as datasets:
@@ -169,8 +171,14 @@ First parser to yield non-whitespace text wins. If all three yield empty text, t
 
 This cuts ~20–30% nav chrome from Nature/Springer landing pages and starts the text with the actual `Abstract` instead of `Skip to main content / Thank you for visiting nature.com`.
 
-**200-char usable-text gate:**
-`_MIN_USABLE_TEXT_CHARS = 200`. Any successful HTTP fetch whose extracted text is under this threshold is treated as a *failed download*: the file is deleted, `downloaded=False` is returned, and `download_with_resolution` iterates to the next candidate. This eliminates the silent "empty text → LLM plausibility fallback" path that used to fabricate `llm_check` "passes" with no source evidence at all.
+**Content-quality gate (`content_quality.py`, Tier 0.3):**
+Under `CQ_MIN_USABLE_CHARS = 200` usable characters (`sourcefinder/config.py`) a fetch is
+`rejected`: the file is deleted, `downloaded=False` is returned, and
+`download_with_resolution` moves to the next candidate. Above it, the deterministic
+classifier grades the text `full_text` / `abstract_only` / `paywall_interstitial` from
+IMRaD headings, access-wall phrases, reference-list dominance, length and page count.
+Only `full_text` is `judgeable`; the other two keep `downloaded=True` but the orchestrator
+abstains with that reason. The signals are written to the manifest as `content_signals`.
 
 **`download_with_resolution` cascade:**
 1. Try `citation_details.url` directly if present
@@ -209,8 +217,11 @@ result = downloader.download_with_resolution(
     raw_citation_text="Smith et al. (2023) ... DOI: 10.1234/abc",
 )
 # Above plus:
-# "attempts": [{"url": ..., "source": "direct"|"open_access"|"institutional_cookies"|"browser",
-#               "downloaded": bool, "error": ...}, ...],
+# "attempts": [{"url": ..., "source": <resolver or phase label>,
+#               "downloaded": bool, "content_quality": ..., "error": ...}, ...],
+#   resolver labels: "europepmc", "europepmc_fulltext", "pmc_efetch", "openalex",
+#   "unpaywall", "semantic_scholar", "crossref", "doi_landing", ...
+#   phase labels:    "direct", "institutional_cookies", "browser", "ezproxy"
 # "winning_url": str | None
 ```
 
@@ -218,7 +229,7 @@ result = downloader.download_with_resolution(
 - Magic-byte format detection (URL and Content-Type can be wrong; body bytes can't)
 - PDF fallback chain across three libraries; drops `PyPDF2` in favor of `pypdf`
 - HTML article-body extraction that strips nav chrome
-- 200-char usable-text gate — no more silent empty-source passes
+- Content-quality gate: only full text is judged; abstracts and login walls are abstained on
 - Multi-candidate cascade via `download_with_resolution`
 - Per-attempt cascade logged for manifest reconstruction
 
@@ -370,10 +381,12 @@ KNOWN_PAYWALL_DOMAINS = [
 ]
 ```
 
-Settings in `text_downloader.py`:
-```python
-_MIN_USABLE_TEXT_CHARS = 200  # min non-whitespace extracted chars for success
-```
+Content-quality thresholds (`CQ_*`) are in the same file, starting with
+`CQ_MIN_USABLE_CHARS = 200`. They are uncalibrated starting points: run
+`scripts/calibrate_content_quality.py` to label real fetches and score them.
+
+HTTP behaviour (`polite_http.py`) is tuned by the `ASV_HTTP_*` variables listed in
+`.env.example`: per-host interval, retries, cache directory and TTL.
 
 ## Data Models
 
@@ -456,8 +469,9 @@ download_result = self.text_downloader.download(
 - HTTP errors → return `{downloaded: false, error: "HTTP 404"}`
 - Timeout → return `{downloaded: false, error: "Timeout"}`
 - **DatasetDownloader** — non-tabular payload → `{downloaded: false, error: "URL is not tabular data (detected: application/pdf)"}` (or `text/html`, etc.). Caller iterates.
-- **TextDownloader** — extraction under 200 usable chars → file deleted from disk, `{downloaded: false, error: "Extraction produced N usable chars (<200); format=..."}`. Caller iterates.
-- **TextDownloader** — all three PDF parsers failed → `_extract_pdf_text` returns `""`, then the 200-char gate rejects it. File deleted, download flagged as failed.
+- **TextDownloader** — extraction under `CQ_MIN_USABLE_CHARS` → file deleted from disk, `downloaded: false` with an `Unusable content: only N usable characters` error. Caller iterates.
+- **TextDownloader** — all three PDF parsers failed → `_extract_pdf_text` returns `""`, which the content gate rejects. File deleted, download flagged as failed.
+- **TextDownloader** — fetched but graded `abstract_only` / `paywall_interstitial` → `downloaded: true, judgeable: false`; the best candidate is kept and the batch abstains with that reason.
 
 ## Dependencies
 
@@ -470,44 +484,23 @@ openpyxl             # xlsx read/write
 PyMuPDF              # primary PDF extractor
 pdfminer.six         # fallback PDF extractor
 pypdf                # last-resort PDF extractor (successor to PyPDF2)
-PyPDF2               # legacy, retained for callers that import it
+rapidfuzz            # title matching on search hits
 playwright           # browser fallback for paywalled searches (optional)
 ```
 
-## Future Enhancements
+## Open work
 
-### Dataset Finder
-- Integrate real APIs (Kaggle, Google Dataset Search)
-- Add authentication for API keys
-- Improve search relevance with semantic matching
-- Cache search results
-
-### Text Finder
-- Integrate Scholar/arXiv/Semantic Scholar APIs
-- Add DOI resolution
-- Prioritize open-access sources
-- Handle paywalls gracefully
-
-### Downloaders
-- Add retry logic with exponential backoff
-- Support more formats (Parquet, HDF5, etc.)
-- Validate downloaded content
-- Add progress tracking for large files
-- Handle authentication/tokens for protected sources
+Tracked in `docs/SOURCE_ACQUISITION.md` §10 ("Not done") and `docs/README.md`. The
+items that touch this package: an OpenAlex API key (required since 2026-02-13; the
+clients still send only `mailto`), persisting Playwright `storage_state()` across runs,
+skipping book chapters in acquisition (F9), and the residual-failure rescue lane.
 
 ## Testing
 
-```python
-# Test dataset finder
-finder = DatasetFinder(llm_client=llm_client)
-result = finder.find_dataset("COVID-19 cases increased", "test_1")
-assert result is not None
-assert result.source_url
-assert result.confidence > 0.5
-
-# Test downloader
-downloader = DatasetDownloader()
-result = downloader.download("https://example.com/data.csv", "test_citation")
-assert result['downloaded'] == True
-assert os.path.exists(result['path'])
+```bash
+pytest src/asv/sourcefinder                       # offline; real responses replayed from tests/fixtures/api/
+ASV_LIVE_API_TESTS=1 pytest -m live --no-cov      # the same clients against the live services
 ```
+
+`tests/conftest.py` fails any test that reaches the network or reads a real `.env`
+credential; use the `creds` fixture to set one.

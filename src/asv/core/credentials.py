@@ -154,7 +154,7 @@ CREDENTIAL_SPECS: List[CredentialSpec] = [
             "around publisher blocks."
         ),
         signup_url="https://core.ac.uk/services/api",
-        impact="CORE still answers keyless but is aggressively rate-limited.",
+        impact="Keyless CORE answers 429 to everything, so ASV skips CORE entirely without a key.",
     ),
     # -- Publisher TDM ------------------------------------------------------
     CredentialSpec(
